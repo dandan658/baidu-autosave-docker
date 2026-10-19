@@ -8,6 +8,7 @@ import time
 import uuid
 
 from media_rules import destination_name
+from task_history import TaskHistory
 
 
 def field(item, name, default=None):
@@ -42,11 +43,8 @@ def scan(storage, client, root):
 def transfer_organized(storage, client, files, roots, share_url, save_dir, task, progress=None, selected=None):
     report = progress or (lambda *_: None)
     root = posixpath.normpath('/' + (save_dir or '').lstrip('/'))
-    if root == '/':
+    if root == '/' and (task.get('flatten') or task.get('auto_rename')):
         raise ValueError('整理模式需要专用保存目录，不能使用网盘根目录')
-    if not storage._ensure_dir_tree_exists(root, client=client):
-        raise ValueError(f'无法创建目标目录：{root}')
-    existing = scan(storage, client, root)
     identity = str(task.get('task_uid') or task.get('order') or share_url)
     owner = storage.config['baidu'].get('current_user', '')
     task_key = hashlib.sha256(f'{owner}:{identity}:{share_url}:{root}'.encode()).hexdigest()[:24]
@@ -54,7 +52,10 @@ def transfer_organized(storage, client, files, roots, share_url, save_dir, task,
     state_dir.mkdir(parents=True, exist_ok=True)
     state_path = state_dir / f'{task_key}.json'
     records = json.loads(state_path.read_text(encoding='utf-8')) if state_path.exists() else {}
+    history = TaskHistory(identity, share_url)
+    history.register_organized(state_path)
     def persist():
+        if history.deleted: return
         temporary = state_path.with_suffix('.' + uuid.uuid4().hex + '.tmp')
         try:
             with temporary.open('w', encoding='utf-8') as handle:
@@ -79,6 +80,11 @@ def transfer_organized(storage, client, files, roots, share_url, save_dir, task,
             continue
         if any(part in ('.', '..', '') for part in relative.split('/')):
             raise ValueError(f'分享文件路径不安全：{relative}')
+        previous = records.get(source_id)
+        if previous and same_file(previous, source) and not history.contains(source):
+            history.remember(source, previous['path'])
+        if history.contains(source):
+            continue
         included, destination, warning = destination_name(relative, task)
         if warning:
             warnings.append(warning)
@@ -88,6 +94,14 @@ def transfer_organized(storage, client, files, roots, share_url, save_dir, task,
         suffix = hashlib.sha256(source_id.encode()).hexdigest()[:10]
         planned.append({'source': source, 'id': source_id, 'relative': relative,
                         'desired': posixpath.join(root, destination), 'suffix': suffix})
+    if not planned:
+        if warnings:
+            return {'success': False, 'error': '\n'.join(warnings), 'transferred_files': []}
+        report('info', '已按任务转存记忆跳过历史文件，没有新文件需要转存')
+        return {'success': True, 'skipped': True, 'transferred_files': [], 'message': '没有新文件需要转存（已记忆的文件即使被移动也不重复转存）'}
+    if not storage._ensure_dir_tree_exists(root, client=client):
+        raise ValueError(f'无法创建目标目录：{root}')
+    existing = scan(storage, client, root)
     # Resolve collisions deterministically before any transfer takes place.
     reserved = {}
     for item in planned:
@@ -114,8 +128,11 @@ def transfer_organized(storage, client, files, roots, share_url, save_dir, task,
     completed, failures = [], []
     staging_root = posixpath.join(root, f'.baidu-autosave-{task_key}')
     for item in planned:
+        if history.deleted:
+            return {'success': False, 'error': '任务已删除，已停止后续转存并清除记忆', 'transferred_files': completed}
         source, destination, old_path = item['source'], item['destination'], item['old_path']
         if old_path == destination:
+            history.remember(source, destination)
             continue
         try:
             parent = posixpath.dirname(destination)
@@ -154,6 +171,7 @@ def transfer_organized(storage, client, files, roots, share_url, save_dir, task,
             existing[destination] = source
             records[item['id']] = {'path': destination, 'size': source.get('size'), 'md5': source.get('md5')}
             persist()
+            history.remember(source, destination)
             completed.append(posixpath.relpath(destination, root))
             report('success', f'整理成功：{destination}')
             time.sleep(storage.config.get('file_operations', {}).get('rename_delay_seconds', 0.5))

@@ -11,7 +11,7 @@
       ref="formRef"
       :model="form"
       :rules="formRules"
-      label-width="80px"
+      label-width="112px"
       @submit.prevent="handleSubmit"
     >
       <el-form-item label="任务名称" prop="name">
@@ -64,10 +64,15 @@
           clearable
           :loading="isParsingUrl"
         />
-        <div class="form-help">支持两种格式的百度网盘链接，密码可在链接中或单独填写</div>
-        <el-button size="small" :loading="isParsingUrl" @click="parseUrl">从链接获取名称（手动）</el-button>
+        <div class="form-help">支持 /s/ 或 /share/init 链接，链接中的提取码会自动填入下方输入框</div>
+        <div class="link-actions"><el-button size="small" :loading="isParsingUrl" @click="parseUrl">从链接获取名称（手动）</el-button></div>
       </el-form-item>
       
+      <el-form-item label="提取码" prop="pwd">
+        <el-input v-model="form.pwd" placeholder="4 位提取码，无提取码可留空" maxlength="4" clearable autocomplete="off" />
+        <div class="form-help">与登录密码无关；手动填写的提取码优先。编辑任务时会显示已保存的值。</div>
+      </el-form-item>
+
       <el-form-item label="保存路径" prop="save_dir">
         <div class="path-input-group">
           <el-autocomplete
@@ -86,6 +91,7 @@
             @change="handlePathNameSync"
           />
         </div>
+        <div class="form-help">成功转存的文件随任务记忆，云盘中移动或改名后不会重复转存；删除任务会清除记忆。</div>
       </el-form-item>
       
       <el-form-item label="分类" prop="category">
@@ -199,6 +205,7 @@ const isParsingUrl = ref(false) // URL解析状态
 const form = reactive({
   name: '',
   url: '',
+  pwd: '',
   save_dir: '',
   category: '',
   cron: '',
@@ -215,10 +222,11 @@ const form = reactive({
 // 移除advancedVisible，不再需要折叠面板
 
 const formRules = {
+  pwd: [{ pattern: /^$|^[a-zA-Z0-9]{4}$/, message: '提取码应为 4 位字母或数字', trigger: 'blur' }],
   url: [
     { required: true, message: '请输入分享链接', trigger: 'blur' },
     {
-      pattern: /^https:\/\/pan\.baidu\.com\/s\/[a-zA-Z0-9_-]+/,
+      pattern: /^https:\/\/pan\.baidu\.com\/(?:s\/[a-zA-Z0-9_-]+|share\/init\?)/,
       message: '请输入有效的百度网盘分享链接',
       trigger: 'blur'
     }
@@ -240,6 +248,7 @@ const editingTask = computed(() => props.task)
 const resetForm = () => {
   form.name = ''
   form.url = ''
+  form.pwd = ''
   form.save_dir = getDefaultSavePath.value || '' // 使用默认路径，如果为空则用空字符串
   form.category = ''
   form.cron = ''
@@ -263,18 +272,11 @@ const parseUrl = async () => {
   try {
     isParsingUrl.value = true
     
-    // 解析URL和密码
-    let url = form.url.split('#')[0] // 移除hash部分
-    let pwd = ''
-    
-    if (url.includes('?pwd=')) {
-      [url, pwd] = url.split('?pwd=')
-    } else if (url.includes('&pwd=')) {
-      [url, pwd] = url.split('&pwd=')
-    }
-    
+    const url = form.url.split('#')[0]
+    const pwd = form.pwd
+
     const response = await apiService.getShareInfo(url, pwd)
-    if (!visible.value || form.url !== requestedUrl || form.name !== requestedName) return
+    if (!visible.value || form.url !== requestedUrl || form.name !== requestedName || form.pwd !== pwd) return
     
     if (response.success && response.folder_name) {
       const filename = response.folder_name
@@ -289,8 +291,11 @@ const parseUrl = async () => {
         const cleanBasePath = basePath.replace(/\/+$/, '') // 移除末尾的所有斜杠
         form.save_dir = cleanBasePath ? `${cleanBasePath}/${form.name}` : `/${form.name}`
       }
+    } else {
+      ElMessage.warning(response.message || '未能获取分享信息，请检查提取码或稍后重试')
     }
   } catch (error) {
+    ElMessage.warning('未能获取分享信息，请稍后重试')
     // 静默失败，不显示错误信息
     console.warn('URL解析失败:', error)
   } finally {
@@ -371,14 +376,10 @@ const searchRegexReplaces = (queryString: string, callback: (suggestions: any[])
 const loadTaskData = (task: Task) => {
   form.name = task.name || ''
   
-  // 构建完整的转存链接（包括密码）
-  let fullUrl = task.url
-  if (task.pwd && task.pwd.trim() !== '' && !task.url.includes('?pwd=') && !task.url.includes('&pwd=')) {
-    const separator = task.url.includes('?') ? '&' : '?'
-    fullUrl = `${task.url}${separator}pwd=${task.pwd}`
-  }
-  form.url = fullUrl
-  
+  form.url = task.url
+  const embedded = (() => { try { return new URL(task.url).searchParams.get('pwd') || '' } catch { return '' } })()
+  form.pwd = task.pwd || embedded
+
   form.save_dir = task.save_dir
   form.category = task.category || ''
   form.cron = task.cron || ''
@@ -470,38 +471,6 @@ watch(
   { immediate: true }
 )
 
-// 应用移动端样式 - 优化版本
-const applyMobileStyles = () => {
-  if (window.innerWidth <= 1200) { // 使用统一断点
-    nextTick(() => {
-      // 确保底部按钮不被地址栏遮挡
-      const footer = document.querySelector('.add-task-dialog .el-dialog__footer')
-      if (footer) {
-        const footerElement = footer as HTMLElement
-        // 使用fixed定位，确保始终在视口底部
-        footerElement.style.setProperty('position', 'fixed', 'important')
-        footerElement.style.setProperty('bottom', '0', 'important')
-        footerElement.style.setProperty('left', '0', 'important')
-        footerElement.style.setProperty('right', '0', 'important')
-        footerElement.style.setProperty('z-index', '10001', 'important')
-        footerElement.style.setProperty('background', 'white', 'important')
-        footerElement.style.setProperty('box-shadow', '0 -2px 8px rgba(0, 0, 0, 0.1)', 'important')
-        // 适配安全区域
-        const safeAreaBottom = getComputedStyle(document.documentElement).getPropertyValue('env(safe-area-inset-bottom)') || '20px'
-        footerElement.style.setProperty('padding-bottom', `calc(16px + ${safeAreaBottom})`, 'important')
-      }
-      
-      // 调整内容区域，为底部按钮留出空间
-      const body = document.querySelector('.add-task-dialog .el-dialog__body')
-      if (body) {
-        const bodyElement = body as HTMLElement
-        bodyElement.style.setProperty('padding-bottom', '120px', 'important') // 更多底部间距
-        bodyElement.style.setProperty('height', 'calc(100vh - 160px)', 'important')
-      }
-    })
-  }
-}
-
 // 监听对话框显示状态
 watch(visible, (newVisible) => {
   if (!newVisible) {
@@ -514,10 +483,15 @@ watch(visible, (newVisible) => {
         resetForm()
       })
     }
-    // 应用移动端样式
-    applyMobileStyles()
   }
 })
+
+watch(() => form.url, (value) => {
+  try {
+    const code = new URL(value).searchParams.get('pwd')
+    if (code !== null) form.pwd = code.trim()
+  } catch { /* Leave the field intact while a URL is being typed. */ }
+}, { flush: 'sync' })
 
 // 监听任务名称变化，自动同步到保存路径
 watch(() => form.media_type, (value) => {
@@ -538,232 +512,26 @@ watch(pathNameSync, (newValue) => {
 })
 </script>
 
-<style scoped>
-.season-rule {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  margin: 8px 0;
-}
-.season-rule > .el-input { flex: 1; min-width: 150px; }
-.add-task-dialog :deep(.el-dialog__header) {
-  padding: 20px 20px 10px;
-  border-bottom: 1px solid #e4e7ed;
-}
-
-.add-task-dialog :deep(.el-dialog__body) {
-  padding: 20px;
-  max-height: 70vh;
-  overflow-y: auto;
-}
-
-.add-task-dialog :deep(.el-dialog__footer) {
-  padding: 10px 20px 20px;
-  border-top: 1px solid #e4e7ed;
-}
-
-.dialog-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 12px;
-}
-
-.el-form-item {
-  margin-bottom: 20px;
-}
-
-.el-form-item :deep(.el-form-item__label) {
-  font-weight: 500;
-  color: #606266;
-}
-
-.el-textarea :deep(.el-textarea__inner) {
-  resize: vertical;
-  min-height: 80px;
-}
-
-/* 高级设置区域样式 */
-.advanced-settings {
-  margin-top: 20px;
-}
-
-.form-help {
-  font-size: 12px;
-  color: #909399;
-  margin-top: 5px;
-  line-height: 1.4;
-}
-
-.path-input-group {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.path-select {
-  flex: 1;
-}
-
-.cron-input-group {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.cron-select {
-  flex: 1;
-}
-
-.sync-switch {
-  flex-shrink: 0;
-}
-
-.sync-switch :deep(.el-switch__core) {
-  background-color: #dcdfe6;
-}
-
-.sync-switch :deep(.is-checked .el-switch__core) {
-  background-color: #409eff;
-}
-
-/* 确保对话框在移动端有正确的层级 */
-:deep(.el-overlay) {
-  z-index: 9999 !important;
-  background-color: rgba(0, 0, 0, 0.5) !important;
-}
-
-.add-task-dialog {
-  z-index: 10000 !important;
-}
-
-/* 响应式调整 - 统一断点为1200px */
-@media (max-width: 1200px) {
-  :deep(.el-overlay) {
-    padding: 0 !important;
-  }
-  
-  /* 直接覆盖Element Plus的dialog样式 */
-  :deep(.el-dialog.add-task-dialog) {
-    width: 100vw !important;
-    max-width: 100vw !important;
-    margin: 0 !important;
-    border-radius: 0 !important;
-    height: 100vh !important;
-    max-height: 100vh !important;
-    z-index: 10000 !important;
-    overflow: hidden !important;
-    position: fixed !important;
-    top: 0 !important;
-    left: 0 !important;
-    right: 0 !important;
-    bottom: 0 !important;
-  }
-  
-  :deep(.el-dialog.add-task-dialog .el-dialog__header) {
-    padding: 16px 20px 10px 20px !important;
-    border-bottom: 1px solid #f0f0f0;
-  }
-  
-  :deep(.el-dialog.add-task-dialog .el-dialog__body) {
-    padding: 16px 20px 100px 20px !important; /* 增加底部padding为按钮和安全区域留空间 */
-    height: calc(100vh - 140px) !important; /* 减少高度为按钮留更多空间 */
-    overflow-y: auto !important;
-    box-sizing: border-box !important;
-  }
-  
-  :deep(.el-dialog.add-task-dialog .el-dialog__footer) {
-    padding: 16px 20px !important;
-    padding-bottom: calc(16px + env(safe-area-inset-bottom, 20px)) !important; /* 适配安全区域 */
-    border-top: 1px solid #f0f0f0;
-    position: fixed !important; /* 使用fixed确保始终在视口底部 */
-    bottom: 0 !important;
-    left: 0 !important;
-    right: 0 !important;
-    background: white !important;
-    display: flex !important;
-    justify-content: flex-end !important;
-    align-items: center !important;
-    gap: 12px !important;
-    z-index: 10001 !important; /* 确保在最上层 */
-    box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.1) !important; /* 添加阴影效果 */
-    min-height: 70px !important; /* 确保按钮区域有足够高度 */
-  }
-  
-  /* 表单标签调整 */
-  :deep(.el-dialog.add-task-dialog .el-form-item__label) {
-    width: 80px !important;
-    font-size: 14px !important;
-    line-height: 1.4 !important;
-  }
-  
-  /* 表单内容区域 */
-  :deep(.el-dialog.add-task-dialog .el-form-item__content) {
-    margin-left: 80px !important;
-  }
-  
-  /* 移动端优化表单按钮 */
-  :deep(.el-dialog.add-task-dialog .el-button) {
-    min-height: 44px !important;
-    padding: 12px 24px !important;
-    border-radius: 8px !important;
-    font-size: 16px !important;
-    font-weight: 500 !important;
-    min-width: 80px !important;
-  }
-  
-  /* 底部按钮特别样式 */
-  :deep(.el-dialog.add-task-dialog .el-dialog__footer .el-button) {
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1) !important;
-  }
-  
-  /* 取消按钮样式 */
-  :deep(.el-dialog.add-task-dialog .el-dialog__footer .el-button--default) {
-    background: #f5f7fa !important;
-    border-color: #e4e7ed !important;
-    color: #606266 !important;
-  }
-  
-  /* 主要操作按钮样式 */
-  :deep(.el-dialog.add-task-dialog .el-dialog__footer .el-button--primary) {
-    background: #409eff !important;
-    border-color: #409eff !important;
-    color: white !important;
-  }
-  
-  /* 移动端优化表单输入框 */
-  :deep(.el-dialog.add-task-dialog .el-input),
-  :deep(.el-dialog.add-task-dialog .el-textarea) {
-    width: 100% !important;
-  }
-  
-  :deep(.el-dialog.add-task-dialog .el-input__inner),
-  :deep(.el-dialog.add-task-dialog .el-textarea__inner) {
-    min-height: 44px !important;
-    font-size: 16px !important; /* 防止iOS放大 */
-    width: 100% !important;
-    box-sizing: border-box !important;
-    padding: 12px !important;
-    border-radius: 6px !important;
-    word-break: break-all !important;
-    overflow-wrap: break-word !important;
-  }
-  
-  /* 移动端表单项优化 */
-  :deep(.el-dialog.add-task-dialog .el-form-item) {
-    margin-bottom: 20px !important;
-  }
-  
-  /* 帮助文本优化 */
-  :deep(.el-dialog.add-task-dialog) .form-help {
-    font-size: 12px !important;
-    line-height: 1.4 !important;
-    margin-top: 6px !important;
-  }
-  
-  /* 高级设置按钮 */
-  :deep(.el-dialog.add-task-dialog .advanced-toggle) {
-    width: 100% !important;
-    margin-top: 8px !important;
-  }
+<style>
+.add-task-dialog { max-width: calc(100vw - 24px); }
+.add-task-dialog .el-dialog__body { max-height: min(68vh, calc(100dvh - 180px)); overflow-y: auto; padding: 16px 20px; }
+.add-task-dialog .el-dialog__header { margin-right: 0; padding: 20px 20px 12px; border-bottom: 1px solid #ebeef5; }
+.add-task-dialog .el-dialog__footer { padding: 12px 20px 16px; border-top: 1px solid #ebeef5; background: white; }
+.add-task-dialog .el-form-item { margin-bottom: 20px; }
+.add-task-dialog .el-form-item__label { white-space: nowrap; word-break: keep-all; font-weight: 500; }
+.add-task-dialog .el-form-item__content { min-width: 0; align-items: flex-start; }
+.add-task-dialog .form-help { flex-basis: 100%; width: 100%; margin-top: 6px; font-size: 12px; color: #73767a; line-height: 1.6; overflow-wrap: anywhere; }
+.add-task-dialog .link-actions { flex-basis: 100%; width: 100%; margin-top: 8px; }
+.add-task-dialog .path-input-group, .add-task-dialog .cron-input-group { width: 100%; display: flex; align-items: center; gap: 10px; }
+.add-task-dialog .path-select, .add-task-dialog .cron-select { flex: 1; min-width: 0; }
+.add-task-dialog .dialog-footer { display: flex; justify-content: flex-end; gap: 12px; }
+.add-task-dialog .season-rule { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+.add-task-dialog .season-rule > .el-input { flex: 1; min-width: 150px; }
+@media (max-width: 640px) {
+  .add-task-dialog { width: calc(100vw - 24px) !important; margin: 12px auto !important; }
+  .add-task-dialog .el-form-item { display: block; }
+  .add-task-dialog .el-form-item__label { display: block; width: auto !important; height: auto; padding: 0 0 6px; line-height: 1.5; text-align: left; }
+  .add-task-dialog .el-form-item__content { margin-left: 0 !important; }
+  .add-task-dialog .el-dialog__body { max-height: calc(100dvh - 160px); }
 }
 </style>

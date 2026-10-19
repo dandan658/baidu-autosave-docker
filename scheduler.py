@@ -286,6 +286,9 @@ class TaskScheduler:
                     
                     def progress_callback(status, msg):
                         logger.info(f"转存进度 - {status}: {msg}")
+                        sink = getattr(self.storage, 'task_log_callback', None)
+                        if callable(sink):
+                            sink(task.get('order'), msg, 'ERROR' if status in ('error', 'failed') else 'INFO', task.get('task_uid'))
                         # 从进度消息中提取转存文件信息
                         if status == 'info' and msg.startswith('添加文件:'):
                             # 提取完整的文件路径
@@ -580,6 +583,9 @@ class TaskScheduler:
             # 使用最新的任务信息执行
             def progress_callback(status, message):
                 logger.info(f"[{task_name}] {status}: {message}")
+                sink = getattr(self.storage, 'task_log_callback', None)
+                if callable(sink):
+                    sink(task_order, message, 'ERROR' if status in ('error', 'failed') else 'INFO', current_task.get('task_uid'))
                 if status == 'info' and message.startswith('添加文件:'):
                     file_path = message.replace('添加文件:', '').strip()
                     if task_id not in results['transferred_files']:
@@ -1040,4 +1046,4 @@ def main():
         scheduler.update_default_schedule(args.cron)
 
 if __name__ == '__main__':
-    main() 
+    main()

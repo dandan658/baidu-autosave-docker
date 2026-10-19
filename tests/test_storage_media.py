@@ -61,3 +61,29 @@ class StorageTests(unittest.TestCase):
         self.storage._list_shared_paths_with_retry = Mock(side_effect=RuntimeError('source unavailable'))
         with self.assertRaises(RuntimeError):
             self.storage._list_shared_dir_files(root, 1, 2, 'test')
+
+    def test_progress_keeps_running_without_disk_writes_or_scheduler_reloads(self):
+        self.storage.config['baidu']['tasks'] = [{'order': 1}]
+        self.assertTrue(self.storage.update_task_status_by_order(1, 'running', '整理成功：01.mp4'))
+        self.assertEqual(self.storage.config['baidu']['tasks'][0]['status'], 'running')
+        self.storage._save_config.assert_not_called()
+        self.storage.update_task_status_by_order(1, 'normal', '转存成功')
+        self.storage._save_config.assert_called_once_with(update_scheduler=False)
+
+    def test_each_delete_api_clears_only_its_task_history(self):
+        from task_history import TaskHistory, history_path
+        import os
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            original = os.getcwd()
+            os.chdir(directory)
+            try:
+                for index, method in enumerate(('remove_task', 'remove_task_by_order', 'remove_tasks')):
+                    uid = 'delete-case-' + str(index)
+                    self.storage.config['baidu']['tasks'] = [{'order': 1, 'task_uid': uid, 'url': 'https://pan.baidu.com/s/test'}]
+                    TaskHistory(uid, 'https://pan.baidu.com/s/test').remember({'fs_id': 1, 'size': 1}, '/01.mp4')
+                    argument = 'https://pan.baidu.com/s/test' if method == 'remove_task' else 1 if method == 'remove_task_by_order' else [1]
+                    self.assertTrue(getattr(self.storage, method)(argument))
+                    self.assertFalse(history_path(uid).exists())
+            finally:
+                os.chdir(original)

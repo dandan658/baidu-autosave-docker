@@ -140,13 +140,46 @@ class TransferTests(unittest.TestCase):
         self.assertIn('/剧集/Season 02/牧神记 - S02E91.mp4', self.storage.files)
         self.assertTrue(self.run_transfer(task)['skipped'])
 
-    def test_name_change_moves_previous_files_without_retransfer(self):
+    def test_name_change_keeps_processed_files_and_affects_only_new_files(self):
         self.run_transfer()
         task = tv()
         task['name'] = '自定义剧名'
-        self.assertTrue(self.run_transfer(task)['success'])
+        self.assertTrue(self.run_transfer(task)['skipped'])
         self.assertEqual(len(self.storage.transfers), 3)
-        self.assertTrue(all('自定义剧名' in p for p in self.storage.files))
+        self.assertTrue(all('牧神记' in p for p in self.storage.files))
+
+    def test_moved_files_are_remembered_even_after_restart(self):
+        self.run_transfer()
+        self.storage.files.clear()  # The user moved everything elsewhere for scraping.
+        self.assertTrue(self.run_transfer()['skipped'])
+        self.assertFalse(self.storage.files)
+        self.assertEqual(len(self.storage.transfers), 3)
+        source = {'fs_id': 4, 'path': '分享/106 4K.mp4', 'size': 104, 'md5': '4'}
+        self.files.append(source)
+        self.storage.sources[4] = source
+        self.assertTrue(self.run_transfer()['success'])
+        self.assertEqual(self.storage.transfers, [1, 2, 3, 4])
+
+    def test_destination_change_does_not_reset_memory(self):
+        self.run_transfer()
+        result = transfer_organized(self.storage, self.storage, self.files, self.roots,
+                                    'https://pan.baidu.com/s/test', '/新位置', tv())
+        self.assertTrue(result['skipped'])
+        self.assertEqual(len(self.storage.transfers), 3)
+
+    def test_legacy_organized_records_migrate_without_retransfer(self):
+        self.run_transfer()
+        for path in Path('config/history').glob('*.json'): path.unlink()
+        self.storage.files.clear()
+        self.assertTrue(self.run_transfer()['skipped'])
+        self.assertEqual(len(self.storage.transfers), 3)
+
+    def test_updated_content_is_a_new_file_version(self):
+        self.run_transfer()
+        self.files[0]['md5'] = 'new-checksum'
+        self.files[0]['size'] = 200
+        self.assertTrue(self.run_transfer()['success'])
+        self.assertEqual(self.storage.transfers, [1, 2, 3, 1])
 
     def test_existing_nested_file_is_moved_instead_of_transferred(self):
         path = '/剧集/001-090/01 4K.mp4'

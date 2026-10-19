@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify, render_template, send_from_directory, session, redirect, url_for, Response, stream_with_context
 from storage import BaiduStorage
 from media_rules import task_options
+from share_links import normalize_share
 from scheduler import TaskScheduler
 import json
 from loguru import logger
@@ -19,7 +20,8 @@ import socket
 import threading
 import queue
 
-from gevent.pywsgi import WSGIServer
+from waitress import create_server
+from server_runtime import server_options
 
 # GitHub 仓库信息
 GITHUB_REPO = 'kokojacket/baidu-autosave'
@@ -82,6 +84,7 @@ logger.add("log/web_app_{time:YYYY-MM-DD}.log",
 app = Flask(__name__)
 app.secret_key = os.environ.get('FLASK_SECRET_KEY') or __import__('secrets').token_hex(32)  # 用于session加密
 CORS(app)
+stream_slots = threading.BoundedSemaphore(4)
 
 @app.route('/healthz')
 def healthz():
@@ -167,7 +170,7 @@ def _format_sse(event_name, payload):
 def _build_task_stream_snapshot(task):
     _ensure_task_runtime_state()
     task_order = task.get('order') if task else None
-    logs = list(app.task_logs.get(task_order, [])) if task_order else []
+    logs = list(app.task_logs.get(task_order, [])[-300:]) if task_order else []
     return {
         'task': task,
         'logs': logs,
@@ -195,6 +198,8 @@ def _append_task_log(task_order, message, level='INFO', task_uid=None):
         'task_order': task_order
     }
     app.task_logs.setdefault(task_order, []).append(log_entry)
+    if len(app.task_logs[task_order]) > 1000:
+        del app.task_logs[task_order][:-1000]
     if stable_uid:
         _publish_task_event(stable_uid, 'log', log_entry)
     return log_entry
@@ -246,6 +251,7 @@ def init_app():
         # 初始化存储
         logger.info("正在初始化存储...")
         storage = BaiduStorage()
+        storage.task_log_callback = _append_task_log
         
         # 使用已创建的 storage 实例初始化调度器
         try:
@@ -388,30 +394,11 @@ def add_task():
     if not url or not save_dir:
         return jsonify({'success': False, 'message': '分享链接和保存目录不能为空'})
     
-    # 移除URL中的hash部分
-    if '#' in url:
-        url = url.split('#')[0]
-    
-    # 处理第二种格式: https://pan.baidu.com/share/init?surl=xxx&pwd=xxx
-    if '/share/init?' in url and 'surl=' in url:
-        import urllib.parse
-        parsed = urllib.parse.urlparse(url)
-        params = urllib.parse.parse_qs(parsed.query)
-        
-        # 提取surl和pwd参数
-        surl = params.get('surl', [''])[0]
-        if not pwd and 'pwd' in params:
-            pwd = params.get('pwd', [''])[0]
-        
-        # 转换为第一种格式
-        if surl:
-            url = f"https://pan.baidu.com/s/{surl}"
-    
-    # 处理第一种格式中的密码部分
-    if '?pwd=' in url:
-        url, pwd = url.split('?pwd=')
-        pwd = pwd.strip()
-        
+    try:
+        url, pwd = normalize_share(url, data.get('pwd'))
+    except ValueError as error:
+        return jsonify({'success': False, 'message': str(error)}), 400
+
     try:
         # 添加任务 - storage.py 内部会处理调度器更新
         options = task_options(data)
@@ -455,16 +442,11 @@ def update_task():
     if not task:
         return jsonify({'success': False, 'message': f'未找到任务(order={task_order})'})
     
-    # 获取新的URL和密码
-    new_url = data.get('url', '').strip()
-    new_pwd = data.get('pwd', '').strip()
-    
-    # 如果URL中包含密码部分，提取出来
-    if '?pwd=' in new_url:
-        new_url, new_pwd = new_url.split('?pwd=')
-        new_url = new_url.strip()
-        new_pwd = new_pwd.strip()
-    
+    try:
+        new_url, new_pwd = normalize_share(data.get('url', task['url']), data.get('pwd'), task.get('pwd'))
+    except ValueError as error:
+        return jsonify({'success': False, 'message': str(error)}), 400
+
     # 创建更新数据对象，保持原有状态
     update_data = {
         'url': new_url,
@@ -517,29 +499,8 @@ def get_share_info():
         return jsonify({'success': False, 'message': '分享链接不能为空'})
     
     try:
-        # 移除URL中的hash部分
-        url = url.split('#')[0]
-        
-        # 处理第二种格式: https://pan.baidu.com/share/init?surl=xxx&pwd=xxx
-        if '/share/init?' in url and 'surl=' in url:
-            import urllib.parse
-            parsed = urllib.parse.urlparse(url)
-            params = urllib.parse.parse_qs(parsed.query)
-            
-            # 提取surl和pwd参数
-            surl = params.get('surl', [''])[0]
-            if not pwd and 'pwd' in params:
-                pwd = params.get('pwd', [''])[0]
-            
-            # 转换为第一种格式
-            if surl:
-                url = f"https://pan.baidu.com/s/{surl}"
-        
-        # 处理第一种格式中的密码部分
-        if '?pwd=' in url:
-            url, extracted_pwd = url.split('?pwd=')
-            pwd = extracted_pwd.strip()
-        
+        url, pwd = normalize_share(url, data.get('pwd'))
+
         # 获取分享文件信息
         result = storage.get_share_folder_name(url, pwd)
         
@@ -1973,7 +1934,7 @@ def get_task_log(task_id):
 
         # 从全局变量中获取任务日志
         if hasattr(app, 'task_logs') and task_order in app.task_logs:
-            logs = app.task_logs[task_order]
+            logs = app.task_logs[task_order][-300:]
             return jsonify({'success': True, 'logs': logs})
         else:
             # 如果没有找到任务日志，返回空列表
@@ -1994,6 +1955,17 @@ def stream_task(task_ref):
     if not task:
         return jsonify({'success': False, 'message': '任务不存在'}), 404
 
+    if not stream_slots.acquire(blocking=False):
+        return jsonify({'success': False, 'message': '实时连接已满，请使用轮询'}), 429
+    released = False
+    release_lock = threading.Lock()
+    def release_slot():
+        nonlocal released
+        with release_lock:
+            if not released:
+                stream_slots.release()
+                released = True
+
     task_uid = task.get('task_uid') or task_ref
     task_order = task.get('order')
     task_url = task.get('url')
@@ -2012,8 +1984,11 @@ def stream_task(task_ref):
             yield _format_sse('snapshot', _build_task_stream_snapshot(task))
 
             while True:
+                disconnected = request.environ.get('waitress.client_disconnected')
+                if disconnected and disconnected():
+                    break
                 try:
-                    event_name, payload = event_queue.get(timeout=15)
+                    event_name, payload = event_queue.get(timeout=2)
                 except queue.Empty:
                     latest_task = storage.resolve_task(task_uid, order=task_order, url=task_url)
                     if latest_task is None:
@@ -2036,11 +2011,12 @@ def stream_task(task_ref):
                     break
         finally:
             _unregister_task_stream(task_uid, event_queue)
+            release_slot()
 
     response = Response(stream_with_context(event_stream()), mimetype='text/event-stream')
     response.headers['Cache-Control'] = 'no-cache'
     response.headers['X-Accel-Buffering'] = 'no'
-    response.headers['Connection'] = 'keep-alive'
+    response.call_on_close(release_slot)
     return response
 
 @app.route('/api/task/share', methods=['POST'])
@@ -2140,11 +2116,11 @@ if __name__ == '__main__':
         
         # 启动HTTP服务器
         server_port = get_server_port()
-        logger.info(f"使用标准WSGI服务器，监听端口: {server_port}")
-        http_server = WSGIServer(('0.0.0.0', server_port), app, log=None)  # 禁用访问日志
+        logger.info(f"使用独立线程 WSGI 服务器，监听端口: {server_port}")
+        http_server = create_server(app, **server_options(server_port))
 
         print(f'Server started at http://0.0.0.0:{server_port}')
-        http_server.serve_forever()
+        http_server.run()
     except KeyboardInterrupt:
         logger.info("接收到 Ctrl+C，正在退出...")
         signal_handler(signal.SIGINT, None)

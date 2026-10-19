@@ -1,7 +1,7 @@
 <template>
   <el-dialog
     v-model="visible"
-    title="任务执行监控"
+    :title="readOnly ? '任务日志' : '任务执行监控'"
     width="800px"
     :before-close="handleClose"
     :close-on-click-modal="false"
@@ -93,7 +93,7 @@
             size="small"
             type="primary"
             text
-            @click="refreshLogs"
+            @click="refreshLogs({ showLoading: true })"
             :loading="logsLoading"
           >
             刷新日志
@@ -101,7 +101,7 @@
         </h3>
         <div class="logs-container" ref="logsContainer">
           <div v-if="logs.length === 0" class="no-logs">
-            暂无日志信息
+            暂无日志信息（显示本次服务运行期间最近 300 条记录）
           </div>
           <div
             v-for="(log, index) in logs"
@@ -120,7 +120,7 @@
     <template #footer>
       <div class="dialog-footer">
         <el-button
-          v-if="isRunning"
+          v-if="isRunning && !readOnly"
           type="warning"
           @click="handleCancel"
           :loading="cancelling"
@@ -148,6 +148,7 @@ interface Props {
   modelValue: boolean
   task: Task | null
   taskId: number
+  readOnly?: boolean
 }
 
 interface Emits {
@@ -189,18 +190,13 @@ let completionHandled = false
 let streamConnected = false
 let streamErrorCount = 0
 
-const POLL_INTERVAL_MS = 800
+const POLL_INTERVAL_MS = 2000
+const MAX_VISIBLE_LOGS = 300
 const TERMINAL_SETTLE_MS = 1500
-const TERMINAL_MESSAGES = ['转存成功', '没有新文件需要转存']
 const STREAM_CONNECT_TIMEOUT_MS = 4000
 const STREAM_MAX_ERRORS = 2
 
-const isRunning = computed(() => {
-  return !isTerminalTask({
-    status: currentStatus.value,
-    message: currentMessage.value
-  } as Task)
-})
+const isRunning = computed(() => currentStatus.value === 'running')
 
 const resetCompletionTracking = () => {
   terminalDetectedAt = null
@@ -239,7 +235,7 @@ const setLogs = async (newLogs: TaskLogEntry[], forceScroll = false) => {
   }
 
   const logCountChanged = newLogs.length !== logs.value.length
-  logs.value = newLogs
+  logs.value = newLogs.slice(-MAX_VISIBLE_LOGS)
 
   if (logCountChanged || forceScroll) {
     await scrollLogsToBottom()
@@ -259,7 +255,7 @@ const appendLog = async (logEntry: TaskLogEntry) => {
     return logs.value
   }
 
-  logs.value = [...logs.value, logEntry]
+  logs.value = [...logs.value.slice(-(MAX_VISIBLE_LOGS - 1)), logEntry]
   await scrollLogsToBottom()
   return logs.value
 }
@@ -285,7 +281,6 @@ const isTerminalTask = (taskData: Task | null | undefined) => {
   }
 
   return taskData.status === 'normal'
-    && TERMINAL_MESSAGES.some(message => taskData.message?.includes(message))
 }
 
 const scheduleNextPoll = (delay = POLL_INTERVAL_MS) => {
@@ -445,6 +440,7 @@ const finalizeTask = async (taskData: Task | null, options: { refreshLatestLogs?
   }
 
   stopMonitoring()
+  if (props.readOnly) return
   emit('task-completed', taskData)
 
   if (taskData.status === 'success' || taskData.status === 'completed' || taskData.status === 'skipped') {
@@ -461,8 +457,7 @@ const pollTaskState = async () => {
     return
   }
 
-  const taskData = await checkTaskStatus()
-  const latestLogs = await refreshLogs()
+  const [taskData, latestLogs] = await Promise.all([checkTaskStatus(), refreshLogs()])
 
   if (!visible.value) {
     return
@@ -567,6 +562,15 @@ const startMonitoring = () => {
   logs.value = []
   transferredFiles.value = []
   elapsedTime.value = '00:00'
+  if (props.readOnly) {
+    applyTaskState(props.task)
+    startTime.value = props.task.last_execute_time
+      ? new Date(props.task.last_execute_time * 1000).toLocaleString() : '—'
+    if (props.task.status !== 'running') {
+      void refreshLogs({ showLoading: true })
+      return
+    }
+  }
   currentStatus.value = 'running'
   currentMessage.value = '任务正在执行中...'
 
@@ -583,7 +587,7 @@ const handleCancel = async () => {
   cancelling.value = true
   try {
     ElMessage.warning('任务取消功能暂未实现')
-    emit('task-cancelled')
+    // Do not report a cancellation that the backend did not perform.
   } catch {
     ElMessage.error('取消任务失败')
   } finally {
@@ -591,12 +595,11 @@ const handleCancel = async () => {
   }
 }
 
-const handleClose = async () => {
-  if (isRunning.value) {
-    await refreshLogs({ showLoading: true })
-  }
-  stopMonitoring()
+const handleClose = (done?: unknown) => {
+  // Closing is a local UI action; it must never wait on a slow NAS request.
   visible.value = false
+  stopMonitoring()
+  if (typeof done === 'function') done()
 }
 
 watch(() => props.modelValue, (newVal) => {

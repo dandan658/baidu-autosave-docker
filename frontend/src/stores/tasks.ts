@@ -308,8 +308,24 @@ export const useTaskStore = defineStore('tasks', () => {
   // 轮询更新处理
   const handleTaskUpdate = (updatedTasks: Task[]) => {
     // 更新任务列表
-    const sortedTasks = updatedTasks.sort((a, b) => (a.order || 0) - (b.order || 0))
-    tasks.value = sortedTasks
+    const previous = new Map(tasks.value.map(task => [task.task_uid || task.order, task]))
+    const next = [...updatedTasks].sort((a, b) => (a.order || 0) - (b.order || 0)).map(incoming => {
+      const existing = previous.get(incoming.task_uid || incoming.order)
+      if (!existing) return incoming
+      for (const key of Object.keys(existing)) {
+        if (!(key in incoming)) delete (existing as any)[key]
+      }
+      for (const [key, value] of Object.entries(incoming)) {
+        const oldValue = (existing as any)[key]
+        if (oldValue !== value && (typeof value !== 'object' || JSON.stringify(oldValue) !== JSON.stringify(value))) {
+          (existing as any)[key] = value
+        }
+      }
+      return existing
+    })
+    if (next.length !== tasks.value.length || next.some((task, index) => task !== tasks.value[index])) {
+      tasks.value = next
+    }
   }
 
   // 选择操作

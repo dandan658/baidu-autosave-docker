@@ -45,11 +45,13 @@ export class PollingService extends EventEmitter {
   private isRunning = false
   private retryCount = 0
   private maxRetries = 3
+  private requestInFlight = false
+  private nextAttemptAt = 0
   
   // 轮询配置
   private config = {
     taskStatusInterval: 5000,   // 任务状态轮询间隔
-    fastPollingInterval: 1000,  // 快速轮询间隔（任务执行时）
+    fastPollingInterval: 2000,  // 快速轮询间隔（任务执行时）
     retryDelay: 3000           // 重试延迟
   }
 
@@ -90,6 +92,7 @@ export class PollingService extends EventEmitter {
 
   // 设置快速轮询（任务执行时使用）
   setFastPolling(enabled: boolean) {
+    if (!this.isRunning) return
     if (this.taskStatusTimer) {
       clearInterval(this.taskStatusTimer)
     }
@@ -106,6 +109,8 @@ export class PollingService extends EventEmitter {
   }
 
   private async pollTaskStatus() {
+    if (!this.isRunning || this.requestInFlight || document.hidden || Date.now() < this.nextAttemptAt) return
+    this.requestInFlight = true
     try {
       const response = await apiService.getTasksStatus()
       if (response.success) {
@@ -116,6 +121,8 @@ export class PollingService extends EventEmitter {
       }
     } catch (error) {
       this.handleError('任务状态轮询出错', error)
+    } finally {
+      this.requestInFlight = false
     }
   }
 
@@ -125,16 +132,9 @@ export class PollingService extends EventEmitter {
     this.retryCount++
     
     if (this.retryCount >= this.maxRetries) {
-      console.log('轮询错误次数过多，暂停轮询')
-      this.stop()
-      
-      // 延迟后重新启动
-      setTimeout(() => {
-        this.retryCount = 0
-        this.start()
-      }, this.config.retryDelay)
+      this.nextAttemptAt = Date.now() + Math.min(30000, this.config.retryDelay * this.retryCount)
     }
-    
+
     this.emit('error', { context, error })
   }
 

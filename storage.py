@@ -17,6 +17,7 @@ import uuid
 from functools import wraps
 from media_rules import regex_filename, task_options
 from organizer import transfer_organized
+from task_history import delete_task_history
 
 def _format_transfer_error(error_str):
     """格式化转存错误信息，将百度API返回的模糊错误信息转换为更清晰的提示"""
@@ -758,6 +759,7 @@ class BaiduStorage:
                     tasks.pop(i)
                     # 确保更新调度器
                     self._save_config(update_scheduler=True)
+                    delete_task_history(task.get('task_uid'))
                     logger.success(f"删除任务成功: {share_url}")
                     return True
             logger.warning(f"未找到任务: {share_url}")
@@ -1202,9 +1204,9 @@ class BaiduStorage:
             try:
                 # 访问分享链接
                 if pwd:
-                    logger.info(f"使用密码 {pwd} 访问分享链接")
+                    logger.info("已提供提取码，正在验证分享链接")
                 if progress_callback:
-                        progress_callback('info', f'使用密码访问分享链接')
+                        progress_callback('info', '已提供提取码，正在验证分享链接' if pwd else '未提供提取码（公开分享无需填写）')
                 self._access_shared_with_retry(share_url, pwd, client=temp_client)
 
                 # 步骤1.1：获取分享文件列表并记录
@@ -1249,7 +1251,7 @@ class BaiduStorage:
                 if progress_callback:
                     progress_callback('info', f'获取到 {len(shared_files_info)} 个共享文件')
                 
-                if task_config and (task_config.get('flatten') or task_config.get('auto_rename') or task_config.get('regex_replace') or task_config.get('season_folders')):
+                if task_config and task_config.get('task_uid'):
                     lock_key = task_config.get('task_uid') or share_url
                     with self.task_locks.setdefault(lock_key, Lock()):
                         return transfer_organized(self, temp_client, shared_files_info, shared_paths,
@@ -1768,7 +1770,7 @@ class BaiduStorage:
         """带重试功能的访问分享链接方法"""
         if client is None:
             client = self.client
-        return client.access_shared(share_url, pwd)
+        return client.access_shared(share_url, pwd, show_vcode=False)
 
     @api_retry(max_retries=1, delay_range=(2, 3))
     def _shared_paths_with_retry(self, shared_url, client=None):
@@ -1789,7 +1791,7 @@ class BaiduStorage:
         try:
             logger.info(f"开始获取分享链接 {share_url} 的文件列表")
             if pwd:
-                logger.info(f"使用密码 {pwd} 访问分享链接")
+                logger.info("已提供提取码，正在验证分享链接")
                 
             logger.debug("开始访问分享链接...")
             self._access_shared_with_retry(share_url, pwd)
@@ -2301,6 +2303,9 @@ class BaiduStorage:
                 # 保存配置并更新调度器
                 self._save_config(update_scheduler=True)
                 # 重新整理剩余任务的顺序
+                for removed in tasks:
+                    if removed.get('order') in orders:
+                        delete_task_history(removed.get('task_uid'))
                 self._update_task_orders()
                 logger.success(f"批量删除任务成功: 删除了{deleted_count}个任务")
             
@@ -2323,14 +2328,13 @@ class BaiduStorage:
             tasks = self.config['baidu']['tasks']
             for task in tasks:
                 if task.get('order') == order:
-                    # 状态转换逻辑
-                    if message and ('成功' in message or '没有新文件需要转存' in message):
-                        task['status'] = 'normal'
-                    elif status in ['success', 'skipped', 'pending', 'running']:
+                    if status == 'running':
+                        task['status'] = 'running'
+                    elif status in ('normal', 'success', 'skipped', 'pending', 'completed'):
                         task['status'] = 'normal'
                     else:
                         task['status'] = 'error'
-                        
+
                     if message:
                         task['message'] = message
                     if error:
@@ -2344,7 +2348,8 @@ class BaiduStorage:
                     # 添加最后执行时间
                     task['last_execute_time'] = int(time.time())
                     
-                    self._save_config()
+                    if status != 'running' or error:
+                        self._save_config(update_scheduler=False)
                     logger.info(f"已更新任务状态: order={order} -> {task['status']} ({message})")
                     return True
             return False
@@ -2366,6 +2371,7 @@ class BaiduStorage:
                     tasks.pop(i)
                     # 确保更新调度器
                     self._save_config(update_scheduler=True)
+                    delete_task_history(task.get('task_uid'))
                     # 重新整理剩余任务的顺序
                     self._update_task_orders()
                     logger.success(f"删除任务成功: order={order}")

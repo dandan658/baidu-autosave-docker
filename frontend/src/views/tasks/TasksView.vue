@@ -186,9 +186,10 @@
           </template>
         </el-table-column>
         
-        <el-table-column label="操作" class-name="col-actions">
+        <el-table-column label="操作" class-name="col-actions" min-width="210">
           <template #default="{ row }">
             <el-button-group size="small">
+              <el-button @click="viewTaskLogs(row)" title="查看任务日志">日志</el-button>
               <el-button 
                 type="primary" 
                 @click="executeTask(row.order - 1)"
@@ -293,6 +294,7 @@
           
           <!-- 卡片操作按钮 -->
           <div class="card-actions">
+            <button class="action-btn" @click="viewTaskLogs(task)" title="查看任务日志">日志</button>
             <button 
               class="action-btn action-btn-primary"
               @click="executeTask(task.order - 1)"
@@ -343,6 +345,7 @@
       v-model="showTaskRunner"
       :task="runningTask"
       :task-id="runningTaskId"
+      :read-only="runnerReadOnly"
       @task-completed="handleTaskCompleted"
       @task-cancelled="handleTaskCancelled"
       @update:modelValue="handleTaskRunnerClose"
@@ -436,6 +439,7 @@ const editingTask = ref<Task | null>(null)
 const showTaskRunner = ref(false)
 const runningTask = ref<Task | null>(null)
 const runningTaskId = ref(-1)
+const runnerReadOnly = ref(false)
 
 // 拖拽状态
 const isDragging = ref(false)
@@ -511,6 +515,13 @@ const handleSelectionChange = (selection: Task[]) => {
   selectedTasks.value = selection
 }
 
+const viewTaskLogs = (task: Task) => {
+  runnerReadOnly.value = true
+  runningTask.value = task
+  runningTaskId.value = task.order - 1
+  showTaskRunner.value = true
+}
+
 const executeTask = async (taskId: number) => {
   // 找到对应的任务
   const task = tasks.value.find(t => t.order - 1 === taskId)
@@ -526,6 +537,7 @@ const executeTask = async (taskId: number) => {
   }
   
   // 设置运行窗口数据并显示
+  runnerReadOnly.value = false
   runningTask.value = task
   runningTaskId.value = taskId
   showTaskRunner.value = true
@@ -783,12 +795,12 @@ onUnmounted(() => {
 })
 
 // 监听tasks变化，重新初始化拖拽
-watch(tasks, async () => {
+watch(() => tasks.value.map(task => task.task_uid || task.order).join(','), async () => {
   if (tasks.value.length > 0) {
     await nextTick()
     await initSortable()
   }
-}, { deep: true })
+})
 
 watch([searchQuery, statusFilter, categoryFilter, isReversed], async () => {
   await nextTick()
