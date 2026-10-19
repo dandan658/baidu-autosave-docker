@@ -9,6 +9,11 @@ export interface ApiResponse<T = any> {
 
 // 任务相关类型
 export interface Task {
+  season_folders?: { source: string; season: number; name: string }[]
+  media_type?: 'other' | 'movie' | 'tv'
+  flatten?: boolean
+  auto_rename?: boolean
+  season?: number
   order: number
   task_uid?: string
   name?: string
@@ -36,6 +41,11 @@ export interface ShareInfo {
 }
 
 export interface CreateTaskRequest {
+  season_folders?: { source: string; season: number; name: string }[]
+  media_type?: 'other' | 'movie' | 'tv'
+  flatten?: boolean
+  auto_rename?: boolean
+  season?: number
   url: string
   save_dir: string
   pwd?: string
@@ -47,6 +57,11 @@ export interface CreateTaskRequest {
 }
 
 export interface UpdateTaskRequest {
+  season_folders?: { source: string; season: number; name: string }[]
+  media_type?: 'other' | 'movie' | 'tv'
+  flatten?: boolean
+  auto_rename?: boolean
+  season?: number
   url?: string
   save_dir?: string
   pwd?: string

@@ -2,8 +2,9 @@
 export const VERSION_CONFIG = {
   APP_VERSION: __APP_VERSION__,
   BUILD_TIME: __BUILD_TIME__,
-  RELEASE_NOTES: '版本号改为从 package.json 自动注入',
+  RELEASE_NOTES: '自定义名称、电影电视剧命名、合并目录与独立分季目录重命名',
   UPDATE_NOTES: {
+    'v1.2.0': '自定义任务名；合并或保留子目录；独立分季命名；修复正则捕获组重命名',
     'v1.1.5': '版本号改为从 package.json 自动注入',
     'v1.1.3': '前端重构版本 - Vue 3 + TypeScript',
     'v1.1.2': '优化轮询机制',

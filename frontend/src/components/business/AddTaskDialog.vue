@@ -17,10 +17,44 @@
       <el-form-item label="任务名称" prop="name">
         <el-input
           v-model="form.name"
-          placeholder="可选，用于标识任务"
+          placeholder="自定义名称，例如：牧神记；不会随分享名称变化"
           clearable
           @input="pathNameSync && handlePathNameSync()"
         />
+      </el-form-item>
+
+      <el-form-item label="资源类型">
+        <el-radio-group v-model="form.media_type">
+          <el-radio-button label="tv">电视剧</el-radio-button>
+          <el-radio-button label="movie">电影</el-radio-button>
+          <el-radio-button label="other">普通文件</el-radio-button>
+        </el-radio-group>
+      </el-form-item>
+      <el-form-item label="合并子目录">
+        <el-switch v-model="form.flatten" />
+        <div class="form-help">开启：各级文件统一放入保存目录。关闭：保留子目录结构，仍支持文件重命名。</div>
+      </el-form-item>
+      <el-form-item label="自动重命名">
+        <el-switch v-model="form.auto_rename" :disabled="form.media_type === 'other'" />
+        <div class="form-help">根据自定义任务名称整理视频和字幕；无法识别集数会提示并跳过，不会按 4K 等画质数字误命名。</div>
+      </el-form-item>
+      <el-form-item v-if="form.media_type === 'tv' && form.auto_rename" label="默认季数">
+        <el-input-number v-model="form.season" :min="1" :max="999" :precision="0" />
+      </el-form-item>
+      <el-form-item v-if="form.auto_rename" label="命名示例">
+        <div class="form-help">{{ form.name || '自定义名称' }}{{ form.media_type === 'tv' ? ` - S${String(form.season).padStart(2, '0')}E101` : '' }}.mp4<br>保留视频原格式；字幕保留语言后缀；同名冲突自动区分，不覆盖文件。</div>
+      </el-form-item>
+      <el-form-item v-if="form.media_type === 'tv'" label="分季目录">
+        <div style="width: 100%">
+          <div class="form-help">源路径相对于分享顶层目录。每个子目录可单独设置季数和新目录名；合并时只使用季数，不创建季目录。001-090 等集数范围不会被误判为季数。</div>
+          <div v-for="(rule, index) in form.season_folders" :key="index" class="season-rule">
+            <el-input v-model="rule.source" placeholder="源子目录，如 第一季 或 001-090" aria-label="源子目录" />
+            <el-input-number v-model="rule.season" :min="1" :max="999" :precision="0" aria-label="对应季数" />
+            <el-input v-model="rule.name" :placeholder="`Season ${String(rule.season).padStart(2, '0')}`" aria-label="新目录名称" />
+            <el-button type="danger" text @click="form.season_folders.splice(index, 1)">删除</el-button>
+          </div>
+          <el-button size="small" @click="form.season_folders.push({ source: '', season: 1, name: '' })">添加子目录规则</el-button>
+        </div>
       </el-form-item>
       
       <el-form-item label="转存链接" prop="url">
@@ -28,10 +62,10 @@
           v-model="form.url"
           placeholder="https://pan.baidu.com/s/xxx?pwd=1234 或 https://pan.baidu.com/share/init?surl=xxx&pwd=1234"
           clearable
-          @blur="parseUrl"
           :loading="isParsingUrl"
         />
         <div class="form-help">支持两种格式的百度网盘链接，密码可在链接中或单独填写</div>
+        <el-button size="small" :loading="isParsingUrl" @click="parseUrl">从链接获取名称（手动）</el-button>
       </el-form-item>
       
       <el-form-item label="保存路径" prop="save_dir">
@@ -89,7 +123,7 @@
               value-key="value"
               style="width: 100%"
             />
-            <div class="form-help">正则表达式，用于匹配需要转存的文件，留空表示不过滤</div>
+            <div class="form-help">仅匹配文件名，不含目录；留空表示不过滤。自动命名仅整理视频和字幕。</div>
           </el-form-item>
 
           <el-form-item label="文件重命名" prop="regex_replace">
@@ -101,7 +135,7 @@
               value-key="value"
               style="width: 100%"
             />
-            <div class="form-help">正则表达式替换，用于重命名文件，留空表示不重命名</div>
+            <div class="form-help">支持 $1 或 \1 捕获组；不填过滤规则时可填固定名称。开启自动命名后，以电影/电视剧命名规则为准。</div>
           </el-form-item>
     </el-form>
     
@@ -159,7 +193,7 @@ const {
 // 状态
 const formRef = ref<FormInstance>()
 const submitting = ref(false)
-const pathNameSync = ref(true) // 路径和名称同步开关
+const pathNameSync = ref(false) // 仅在用户明确开启时关联自定义名称
 const isParsingUrl = ref(false) // URL解析状态
 
 const form = reactive({
@@ -169,7 +203,12 @@ const form = reactive({
   category: '',
   cron: '',
   regex_pattern: '',
-  regex_replace: ''
+  regex_replace: '',
+  media_type: 'tv' as 'tv' | 'movie' | 'other',
+  flatten: true,
+  auto_rename: true,
+  season: 1,
+  season_folders: [] as { source: string; season: number; name: string }[]
 })
 
 // 高级设置折叠面板状态
@@ -206,13 +245,20 @@ const resetForm = () => {
   form.cron = ''
   form.regex_pattern = ''
   form.regex_replace = ''
-  pathNameSync.value = true // 重置开关状态
-  formRef.value?.resetFields()
+  form.media_type = 'tv'
+  form.flatten = true
+  form.auto_rename = true
+  form.season = 1
+  form.season_folders = []
+  pathNameSync.value = false
+  formRef.value?.clearValidate()
 }
 
 // 解析转存链接获取文件名
 const parseUrl = async () => {
   if (!form.url || isParsingUrl.value) return
+  const requestedUrl = form.url
+  const requestedName = form.name
   
   try {
     isParsingUrl.value = true
@@ -228,21 +274,20 @@ const parseUrl = async () => {
     }
     
     const response = await apiService.getShareInfo(url, pwd)
+    if (!visible.value || form.url !== requestedUrl || form.name !== requestedName) return
     
     if (response.success && response.folder_name) {
       const filename = response.folder_name
       
-      // 自动填充任务名称
-      if (!form.name) {
-        form.name = filename
-      }
+      // This function only runs on an explicit button click.
+      form.name = filename
       
       // 如果开启了路径和名称同步，更新保存路径
-      if (pathNameSync.value && filename) {
+      if (pathNameSync.value && form.name) {
         const basePath = getDefaultSavePath.value || ''
         // 修复路径拼接问题，避免出现//
         const cleanBasePath = basePath.replace(/\/+$/, '') // 移除末尾的所有斜杠
-        form.save_dir = cleanBasePath ? `${cleanBasePath}/${filename}` : `/${filename}`
+        form.save_dir = cleanBasePath ? `${cleanBasePath}/${form.name}` : `/${form.name}`
       }
     }
   } catch (error) {
@@ -339,6 +384,11 @@ const loadTaskData = (task: Task) => {
   form.cron = task.cron || ''
   form.regex_pattern = task.regex_pattern || ''
   form.regex_replace = task.regex_replace || ''
+  form.media_type = task.media_type || 'other'
+  form.flatten = task.flatten ?? false
+  form.auto_rename = task.auto_rename ?? false
+  form.season = task.season || 1
+  form.season_folders = (task.season_folders || []).map(rule => ({ ...rule }))
   
   // 编辑任务时禁用同步开关，避免意外修改路径
   pathNameSync.value = false
@@ -372,6 +422,10 @@ const handleSubmit = async () => {
 
   const valid = await formRef.value.validate().catch(() => false)
   if (!valid) return
+  if (form.auto_rename && !form.name.trim()) {
+    ElMessage.warning('自动重命名需要填写自定义任务名称')
+    return
+  }
 
   submitting.value = true
 
@@ -466,6 +520,10 @@ watch(visible, (newVisible) => {
 })
 
 // 监听任务名称变化，自动同步到保存路径
+watch(() => form.media_type, (value) => {
+  if (value === 'other') form.auto_rename = false
+  if (value !== 'tv') form.season_folders = []
+})
 watch(() => form.name, (newName) => {
   if (pathNameSync.value && newName) {
     handlePathNameSync()
@@ -481,6 +539,13 @@ watch(pathNameSync, (newValue) => {
 </script>
 
 <style scoped>
+.season-rule {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 8px 0;
+}
+.season-rule > .el-input { flex: 1; min-width: 150px; }
 .add-task-dialog :deep(.el-dialog__header) {
   padding: 20px 20px 10px;
   border-bottom: 1px solid #e4e7ed;
@@ -488,6 +553,8 @@ watch(pathNameSync, (newValue) => {
 
 .add-task-dialog :deep(.el-dialog__body) {
   padding: 20px;
+  max-height: 70vh;
+  overflow-y: auto;
 }
 
 .add-task-dialog :deep(.el-dialog__footer) {

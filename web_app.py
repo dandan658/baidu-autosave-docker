@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify, render_template, send_from_directory, session, redirect, url_for, Response, stream_with_context
 from storage import BaiduStorage
+from media_rules import task_options
 from scheduler import TaskScheduler
 import json
 from loguru import logger
@@ -413,7 +414,8 @@ def add_task():
         
     try:
         # 添加任务 - storage.py 内部会处理调度器更新
-        if storage.add_task(url, save_dir, pwd, name, cron, category, regex_pattern, regex_replace):
+        options = task_options(data)
+        if storage.add_task(url, save_dir, pwd, name, cron, category, regex_pattern, regex_replace, **options):
             
             return jsonify({'success': True, 'message': '添加任务成功'})
             
@@ -487,6 +489,7 @@ def update_task():
         
     try:
         # 更新任务
+        update_data.update(task_options(data, task))
         success = storage.update_task_by_order(task_order, update_data)
         if not success:
             return jsonify({'success': False, 'message': '更新任务失败'})
@@ -2150,4 +2153,4 @@ if __name__ == '__main__':
         try:
             signal_handler(signal.SIGTERM, None)
         except:
-            sys.exit(1) 
+            sys.exit(1)

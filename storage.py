@@ -15,6 +15,8 @@ import json
 import random
 import uuid
 from functools import wraps
+from media_rules import regex_filename, task_options
+from organizer import transfer_organized
 
 def _format_transfer_error(error_str):
     """格式化转存错误信息，将百度API返回的模糊错误信息转换为更清晰的提示"""
@@ -670,7 +672,7 @@ class BaiduStorage:
             logger.error(f"调整任务顺序失败: {str(e)}")
             return False
 
-    def add_task(self, url, save_dir, pwd=None, name=None, cron=None, category=None, regex_pattern=None, regex_replace=None):
+    def add_task(self, url, save_dir, pwd=None, name=None, cron=None, category=None, regex_pattern=None, regex_replace=None, **media_options):
         """添加任务"""
         try:
             if not url or not save_dir:
@@ -711,14 +713,15 @@ class BaiduStorage:
                 'order': new_order,
                 'task_uid': uuid.uuid4().hex
             }
+            new_task.update(task_options(dict(media_options, name=name or '', regex_pattern=regex_pattern, regex_replace=regex_replace)))
             
             # 添加可选字段
             if cron:
                 new_task['cron'] = cron
             if category:
                 new_task['category'] = category.strip()
-            if regex_pattern:
-                new_task['regex_pattern'] = regex_pattern.strip()
+            if regex_pattern or regex_replace:
+                new_task['regex_pattern'] = (regex_pattern or '').strip()
                 new_task['regex_replace'] = regex_replace.strip() if regex_replace else ''
             
             # 添加任务
@@ -1147,52 +1150,8 @@ class BaiduStorage:
             return save_dir, False
 
     def _apply_regex_rules(self, file_path, task_config):
-        """应用正则处理规则 (单个pattern+replace)
-        Args:
-            file_path: 原始文件路径
-            task_config: 任务配置（包含正则规则）
-        Returns:
-            tuple: (should_transfer, final_path)
-                should_transfer: 是否应该转存（False表示被过滤掉）
-                final_path: 处理后的文件路径
-        """
-        try:
-            # 获取正则规则
-            pattern = task_config.get('regex_pattern', '')
-            replace = task_config.get('regex_replace', '')
-            
-            if not pattern:
-                # 没有规则，直接返回原文件
-                return True, file_path
-            
-            try:
-                # 1. 尝试匹配
-                match = re.search(pattern, file_path)
-                if not match:
-                    # 匹配失败 = 文件被过滤掉
-                    logger.debug(f"文件被正则规则过滤: {file_path} (规则: {pattern})")
-                    return False, file_path
-                
-                # 2. 匹配成功，检查是否需要重命名
-                if replace and replace.strip():
-                    # 有替换内容，执行重命名
-                    new_path = re.sub(pattern, replace, file_path)
-                    if new_path != file_path:
-                        logger.debug(f"正则重命名: {file_path} -> {new_path}")
-                        return True, new_path
-                
-                # 3. 匹配成功但无重命名，返回原路径
-                return True, file_path
-                
-            except re.error as e:
-                logger.warning(f"正则表达式错误: {pattern}, 错误: {str(e)}")
-                # 正则错误时不过滤，返回原文件
-                return True, file_path
-            
-        except Exception as e:
-            logger.error(f"应用正则规则时出错: {str(e)}")
-            # 出错时返回原始路径，不影响正常流程
-            return True, file_path
+        """Filter basenames and accept both $1 and Python capture references."""
+        return regex_filename(file_path, task_config)
 
     def transfer_share(self, share_url, pwd=None, new_files=None, save_dir=None, progress_callback=None, task_config=None):
         """转存分享文件
@@ -1280,8 +1239,9 @@ class BaiduStorage:
                         shared_files_info.append({
                             'server_filename': os.path.basename(path.path),
                             'fs_id': path.fs_id,
-                            'path': path.path,
+                            'path': re.sub(r'^/sharelink\d*-\d+/?', '', path.path).lstrip('/'),
                             'size': path.size,
+                            'md5': getattr(path, 'md5', None),
                             'isdir': 0
                         })
                 
@@ -1289,6 +1249,12 @@ class BaiduStorage:
                 if progress_callback:
                     progress_callback('info', f'获取到 {len(shared_files_info)} 个共享文件')
                 
+                if task_config and (task_config.get('flatten') or task_config.get('auto_rename') or task_config.get('regex_replace') or task_config.get('season_folders')):
+                    lock_key = task_config.get('task_uid') or share_url
+                    with self.task_locks.setdefault(lock_key, Lock()):
+                        return transfer_organized(self, temp_client, shared_files_info, shared_paths,
+                                                  share_url, save_dir, task_config, progress_callback, new_files)
+
                 # 步骤2：扫描本地目录中的文件
                 logger.info(f"【步骤2/4】扫描本地目录: {save_dir}")
                 if progress_callback:
@@ -2029,6 +1995,7 @@ class BaiduStorage:
                     'fs_id': file_dict.get('fs_id', ''),
                     'path': file_dict.get('path', ''),
                     'size': file_dict.get('size', 0),
+                    'md5': file_dict.get('md5'),
                     'isdir': file_dict.get('isdir', 0)
                 }
             return None
@@ -2074,7 +2041,7 @@ class BaiduStorage:
                     sub_files = sub_paths.get('list', [])
                 else:
                     logger.error(f"子目录内容格式错误: {type(sub_paths)}")
-                    break
+                    raise ValueError("分享子目录返回了无效数据")
                 
                 if not sub_files:
                     # 没有更多文件了
@@ -2099,16 +2066,20 @@ class BaiduStorage:
                     sub_file_dict = sub_file if isinstance(sub_file, dict) else {}
                     
                 # 如果是目录，递归获取
-                if sub_file.is_dir:
-                    logger.info(f"递归处理子目录: {sub_file.path}")
-                    sub_dir_files = self._list_shared_dir_files(sub_file, uk, share_id, bdstoken, client=client)
+                is_directory = sub_file_dict.get('is_dir', sub_file_dict.get('isdir', False))
+                remote_path = sub_file_dict.get('path', '')
+                if is_directory:
+                    logger.info(f"递归处理子目录: {remote_path}")
+                    from types import SimpleNamespace
+                    directory = SimpleNamespace(path=remote_path)
+                    sub_dir_files = self._list_shared_dir_files(directory, uk, share_id, bdstoken, client=client)
                     files.extend(sub_dir_files)
                 else:
                     # 如果是文件，添加到列表
                     file_info = self._extract_file_info(sub_file_dict)
                     if file_info:
                         # 去掉路径中的 sharelink 部分
-                        file_info['path'] = re.sub(r'^/sharelink\d*-\d+/?', '', sub_file.path)
+                        file_info['path'] = re.sub(r'^/sharelink\d*-\d+/?', '', remote_path)
                         # 去掉开头的斜杠
                         file_info['path'] = file_info['path'].lstrip('/')
                         files.append(file_info)
@@ -2116,6 +2087,7 @@ class BaiduStorage:
                 
         except Exception as e:
             logger.error(f"获取目录 {path.path} 内容失败: {str(e)}")
+            raise
             
         return files
 
@@ -2205,6 +2177,7 @@ class BaiduStorage:
             
             # 保存旧任务配置用于比较
             old_task = tasks[index].copy()
+            media = task_options(task_data, old_task)
             
             # 验证和清理数据
             url = task_data.get('url', '').strip()
@@ -2228,6 +2201,8 @@ class BaiduStorage:
                 'last_update': int(time.time())  # 添加更新时间戳
             })
             
+            tasks[index].update(media)
+
             # 处理分类字段
             if 'category' in task_data:
                 category = task_data['category'].strip()
@@ -2245,6 +2220,10 @@ class BaiduStorage:
                     # 如果新cron为空或无效,删除cron字段
                     tasks[index].pop('cron', None)
             
+            for key in ('regex_pattern', 'regex_replace'):
+                if key in task_data:
+                    tasks[index][key] = (task_data[key] or '').strip()
+
             # 保存配置并更新调度器
             self._save_config()
             
@@ -2418,6 +2397,7 @@ class BaiduStorage:
             
             # 保存旧任务配置用于比较
             old_task = tasks[task_index].copy()
+            media = task_options(task_data, old_task)
             
             # 验证和清理数据
             url = task_data.get('url', '').strip()
@@ -2442,6 +2422,8 @@ class BaiduStorage:
                 'last_update': int(time.time())  # 添加更新时间戳
             })
             
+            tasks[task_index].update(media)
+
             # 处理分类字段
             if 'category' in task_data:
                 category = task_data['category'].strip()
@@ -2459,19 +2441,10 @@ class BaiduStorage:
                     # 如果新cron为空或无效,删除cron字段
                     tasks[task_index].pop('cron', None)
             
-            # 处理正则表达式字段
-            if 'regex_pattern' in task_data:
-                regex_pattern = task_data['regex_pattern']
-                if regex_pattern and regex_pattern.strip():
-                    tasks[task_index]['regex_pattern'] = regex_pattern.strip()
-                    # 处理替换表达式，可以为空
-                    regex_replace = task_data.get('regex_replace', '')
-                    tasks[task_index]['regex_replace'] = regex_replace.strip() if regex_replace else ''
-                else:
-                    # 如果过滤表达式为空，删除相关字段
-                    tasks[task_index].pop('regex_pattern', None)
-                    tasks[task_index].pop('regex_replace', None)
-            
+            for key in ('regex_pattern', 'regex_replace'):
+                if key in task_data:
+                    tasks[task_index][key] = (task_data[key] or '').strip()
+
             # 保存配置并更新调度器
             self._save_config()
             

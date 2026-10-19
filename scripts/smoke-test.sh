@@ -16,6 +16,7 @@ cleanup() {
 }
 trap cleanup EXIT
 docker pull "$image"
+docker run --rm --entrypoint python -v "$(pwd)/tests:/tests:ro" "$image" -m unittest discover -s /tests -v
 docker run -d --name "$container" -p 127.0.0.1:5000:5000 \
   -e ADMIN_PASSWORD=ci-smoke-test-only \
   -v "$temp_dir/config:/app/config" "$image"
