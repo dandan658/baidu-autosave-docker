@@ -40,4 +40,3 @@ done
 curl -fsS -b "$temp_dir/cookies" http://127.0.0.1:5000/api/auth/check \
   | python3 -c 'import json,sys; assert json.load(sys.stdin)["success"]'
 echo 'PASS: startup, scheduler, UI, login, persisted session after restart'
-

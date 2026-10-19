@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
     tags: ['v*']
+    paths-ignore: ['**.md']
   workflow_dispatch:
 
 permissions:
@@ -86,4 +87,17 @@ jobs:
           docker buildx imagetools inspect "$IMAGE:sha-${GITHUB_SHA:0:12}"
           echo "Published: $IMAGE:sha-${GITHUB_SHA:0:12}" >> "$GITHUB_STEP_SUMMARY"
           echo 'Platforms: linux/amd64, linux/arm64' >> "$GITHUB_STEP_SUMMARY"
-
+      - name: Verify anonymous pull access
+        shell: bash
+        run: |
+          set -euo pipefail
+          anonymous_config="$(mktemp -d)"
+          DOCKER_CONFIG="$anonymous_config" docker manifest inspect "$IMAGE:sha-${GITHUB_SHA:0:12}" > /tmp/public-manifest.json
+          python3 - <<'PY'
+          import json
+          with open('/tmp/public-manifest.json') as handle:
+              index = json.load(handle)
+          platforms = {(item.get('platform', {}).get('os'), item.get('platform', {}).get('architecture')) for item in index['manifests']}
+          assert {('linux', 'amd64'), ('linux', 'arm64')} <= platforms
+          print('PASS: anonymous access to both platform manifests')
+          PY
