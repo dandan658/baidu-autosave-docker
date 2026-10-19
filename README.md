@@ -4,7 +4,35 @@
 
 订阅指周期检查已添加的百度网盘分享链接，将新增文件转存到自己的网盘，使用上游的去重逻辑。不是 RSS 内容聚合或文件下载器。
 
-## 启动
+## 直接拉取镜像（推荐）
+
+镜像：`ghcr.io/dandan658/baidu-autosave-docker:latest`，支持 Linux amd64 和 arm64。公开后无需登录 GHCR。
+
+```sh
+docker pull ghcr.io/dandan658/baidu-autosave-docker:latest
+docker run -d --name baidu-autosave --restart unless-stopped --init \
+  -p 127.0.0.1:5000:5000 \
+  -e TZ=Asia/Shanghai \
+  -v baidu-autosave-config:/app/config \
+  -v baidu-autosave-log:/app/log \
+  ghcr.io/dandan658/baidu-autosave-docker:latest
+docker logs baidu-autosave
+```
+
+以上多行命令适用于 Linux/macOS shell。PowerShell 可将 `docker run` 各行合并成一行。
+默认只允许本机访问。要从局域网访问，将 `-p 127.0.0.1:5000:5000` 改成 `-p 5000:5000`。
+
+也可克隆仓库后使用预构建版本的 Compose：
+
+```sh
+docker compose -f compose.prebuilt.yaml pull
+docker compose -f compose.prebuilt.yaml up -d
+docker compose -f compose.prebuilt.yaml logs --tail=100
+```
+
+升级时再次运行上述 `pull` 和 `up -d`，账号和任务保留在挂载目录中。源码构建版本与预构建版本任选其一，避免同时占用 5000 端口。
+
+## 从源码构建启动
 
 需要 Docker Engine / Docker Desktop 和 Docker Compose v2。
 
@@ -50,4 +78,14 @@ docker compose up -d --build
 - 新增 `/healthz` 调度器健康检查。
 - 排除上游示例 Cookie、历史配置及无关文件。
 
-当前制作环境没有 Docker；尚未完成实际镜像构建及百度账号端到端转存验证。原项目说明见 `UPSTREAM_README.md`。
+## 自动构建发布
+
+[GitHub Actions 构建记录](https://github.com/dandan658/baidu-autosave-docker/actions/workflows/docker-publish.yml)
+
+- 推送到 `main`：分别在 amd64、arm64 原生运行器构建，完成启动、调度器健康、前端、登录和重启会话保留检查，均通过才合并发布 `latest`。
+- 推送 `v*` 标签：发布原始标签及去掉 `v` 的版本标签，例如 `v1.0.0` 和 `1.0.0`；不会覆盖 `latest`。
+- 每次成功构建还发布 `sha-<提交前12位>`，可用于固定版本及回滚。
+- 支持在 Actions 页面手动运行。使用仓库的 `GITHUB_TOKEN`，无需设置个人令牌或 Docker Hub 密码。
+- GHCR 首次发布默认可能为 Private，需在包设置中将可见性设为 Public；该设置持续作用于后续版本。
+
+镜像检查不使用真实百度凭据；百度账号端到端转存仍需用户自行验证。原项目说明见 `UPSTREAM_README.md`。
