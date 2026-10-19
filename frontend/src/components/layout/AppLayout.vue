@@ -18,7 +18,7 @@
           <div class="content-container">
             <router-view v-slot="{ Component, route }">
               <Transition
-                name="fade-slide"
+                name="ios-page"
                 mode="out-in"
                 appear
               >
@@ -44,7 +44,7 @@
         <div class="mobile-content-container">
           <router-view v-slot="{ Component, route }">
             <Transition
-              name="fade-slide"
+              name="ios-page"
               mode="out-in"
               appear
             >
@@ -73,6 +73,7 @@
     
     <!-- 全局消息提示容器 -->
     <div id="message-container"></div>
+    <AddTaskDialog v-model="showGlobalAddTask" @success="taskStore.fetchTasks()" />
   </div>
 </template>
 
@@ -85,6 +86,7 @@ import { appStorage } from '@/utils/storage'
 import AppHeader from './AppHeader.vue'
 import AppSidebar from './AppSidebar.vue'
 import AppBottomNav from './AppBottomNav.vue'
+import AddTaskDialog from '@/components/business/AddTaskDialog.vue'
 
 // Composables
 const authStore = useAuthStore()
@@ -93,22 +95,21 @@ const userStore = useUserStore()
 
 // Store 数据
 const { loading: authLoading } = storeToRefs(authStore)
-const { loading: taskLoading } = storeToRefs(taskStore)
-const { loading: userLoading } = storeToRefs(userStore)
 
 // 响应式状态
 const isMobile = ref(checkIsMobile())
-const isCollapsed = ref(false)
+const isCollapsed = ref(window.innerWidth < 1100)
+const showGlobalAddTask = ref(false)
 
 // 计算属性
 const globalLoading = computed(() => {
-  return authLoading.value || taskLoading.value || userLoading.value
+  return authLoading.value
 })
 
 // 方法
 const handleAddTask = () => {
   // 触发全局添加任务事件
-  window.dispatchEvent(new CustomEvent('global-add-task'))
+  showGlobalAddTask.value = true
 }
 
 const handleSidebarCollapse = (collapsed: boolean) => {
@@ -141,7 +142,7 @@ onMounted(async () => {
   // 恢复侧边栏折叠状态
   const savedCollapsed = appStorage.getItem<boolean>('sidebar-collapsed')
   if (savedCollapsed !== null) {
-    isCollapsed.value = savedCollapsed
+    isCollapsed.value = savedCollapsed || window.innerWidth < 1100
   }
   
   // 监听窗口大小变化
@@ -166,213 +167,17 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.app-layout {
-  width: 100%;
-  height: 100vh;
-  overflow: hidden;
-  background-color: #f5f5f5;
-}
-
-/* 桌面端布局 */
-.main-wrapper {
-  margin-left: 260px;
-  transition: margin-left 0.3s ease;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-}
-
-.sidebar-collapsed .main-wrapper {
-  margin-left: 64px;
-}
-
-.main-content {
-  flex: 1;
-  overflow: hidden;
-  margin-top: 60px; /* 头部高度 */
-}
-
-.content-container {
-  height: 100%;
-  overflow-y: auto;
-  overflow-x: hidden;
-}
-
-/* 移动端布局 */
-.mobile-layout .main-wrapper {
-  margin-left: 0;
-}
-
-.mobile-main-content {
-  height: 100vh;
-  padding-top: 60px; /* 头部高度 */
-  padding-bottom: 60px; /* 底部导航高度 */
-  overflow: hidden;
-}
-
-.mobile-content-container {
-  height: 100%;
-  overflow-y: auto;
-  overflow-x: hidden;
-}
-
-/* 页面组件样式 */
-.page-component {
-  min-height: 100%;
-}
-
-/* 过渡动画 */
-.fade-slide-enter-active,
-.fade-slide-leave-active {
-  transition: all 0.3s ease;
-}
-
-.fade-slide-enter-from {
-  opacity: 0;
-  transform: translateX(20px);
-}
-
-.fade-slide-leave-to {
-  opacity: 0;
-  transform: translateX(-20px);
-}
-
-/* 全局加载遮罩 */
-.global-loading {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background-color: rgba(255, 255, 255, 0.8);
-  backdrop-filter: blur(4px);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  z-index: 9999;
-}
-
-.loading-icon {
-  font-size: 32px;
-  color: #409eff;
-  animation: rotate 1s linear infinite;
-  margin-bottom: 16px;
-}
-
-@keyframes rotate {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-.global-loading p {
-  font-size: 14px;
-  color: #666;
-  margin: 0;
-}
-
-/* 移动端侧边栏抽屉样式已移除 */
-
-/* 滚动条样式 */
-.content-container::-webkit-scrollbar,
-.mobile-content-container::-webkit-scrollbar {
-  width: 6px;
-}
-
-.content-container::-webkit-scrollbar-track,
-.mobile-content-container::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.content-container::-webkit-scrollbar-thumb,
-.mobile-content-container::-webkit-scrollbar-thumb {
-  background: #c0c4cc;
-  border-radius: 3px;
-}
-
-.content-container::-webkit-scrollbar-thumb:hover,
-.mobile-content-container::-webkit-scrollbar-thumb:hover {
-  background: #a8a8a8;
-}
-
-/* 响应式断点 - 统一断点保持一致 */
-@media (max-width: 1200px) {
-  .main-wrapper {
-    margin-left: 0;
-  }
-  
-  .sidebar-collapsed .main-wrapper {
-    margin-left: 0;
-  }
-  
-  .mobile-main-content {
-    padding-top: 60px;
-    padding-bottom: 70px; /* 稍微增加底部间距 */
-  }
-}
-
-/* 确保在移动端隐藏桌面端的侧边栏 */
-.mobile-layout .app-sidebar:not(.mobile-sidebar) {
-  display: none;
-}
-
-/* 深色模式适配 */
-@media (prefers-color-scheme: dark) {
-  .app-layout {
-    background-color: #1a1a1a;
-  }
-  
-  .global-loading {
-    background-color: rgba(26, 26, 26, 0.8);
-  }
-  
-  .global-loading p {
-    color: #ccc;
-  }
-}
-
-/* 打印样式 */
-@media print {
-  .app-sidebar,
-  .app-header,
-  .app-bottom-nav,
-  .global-loading {
-    display: none !important;
-  }
-  
-  .main-wrapper {
-    margin-left: 0 !important;
-  }
-  
-  .main-content {
-    margin-top: 0 !important;
-  }
-  
-  .mobile-main-content {
-    padding: 0 !important;
-  }
-}
-
-/* 无障碍支持 */
-@media (prefers-reduced-motion: reduce) {
-  .fade-slide-enter-active,
-  .fade-slide-leave-active,
-  .main-wrapper,
-  .loading-icon {
-    transition: none !important;
-    animation: none !important;
-  }
-}
-
-/* 高对比度模式 */
-@media (prefers-contrast: high) {
-  .app-layout {
-    background-color: #000;
-    color: #fff;
-  }
-  
-  .main-wrapper {
-    border: 2px solid #fff;
-  }
-}
+.app-layout { width:100%; height:100vh; height:100dvh; overflow:hidden; background:transparent; }
+.main-wrapper { margin-left:272px; height:100%; display:flex; flex-direction:column; transition:margin-left .3s var(--ios-ease); min-width:0; }
+.sidebar-collapsed .main-wrapper { margin-left:104px; }
+.main-content { flex:1; min-height:0; margin-top:96px; overflow:hidden; }
+.content-container { height:100%; overflow:auto; overscroll-behavior:contain; scrollbar-gutter:stable; }
+.page-component { min-height:100%; }
+.mobile-main-content { height:100dvh; padding:88px 0 calc(100px + env(safe-area-inset-bottom)); overflow:hidden; }
+.mobile-content-container { height:100%; overflow:auto; overscroll-behavior:contain; }
+.global-loading { position:fixed; inset:0; z-index:9999; display:grid; place-content:center; justify-items:center; gap:12px; background:var(--glass-panel); }
+.loading-icon { font-size:28px; color:var(--el-color-primary); animation:loading-rotate 1s linear infinite; }
+@keyframes loading-rotate { to { transform:rotate(360deg); } }
+@media(max-width:1099px) and (min-width:768px) { .main-wrapper { margin-left:104px; } }
+@media(max-width:767px) { .app-layout { height:100dvh; } }
 </style>

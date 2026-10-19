@@ -5,7 +5,9 @@
     </template>
 
     <template v-else-if="isPublicRoute">
-      <router-view />
+      <router-view v-slot="{ Component, route }">
+        <Transition name="ios-page" mode="out-in"><component :is="Component" :key="route.path" /></Transition>
+      </router-view>
     </template>
 
     <template v-else>

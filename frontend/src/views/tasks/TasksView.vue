@@ -85,10 +85,10 @@
         @selection-change="handleSelectionChange"
         class="desktop-table"
       >
-        <el-table-column type="selection" class-name="col-selection" />
+        <el-table-column type="selection" class-name="col-selection" width="44" />
         
         <!-- 拖拽手柄列 -->
-        <el-table-column label="排序" class-name="col-drag" align="center">
+        <el-table-column label="排序" class-name="col-drag" width="60" align="center">
           <template #default>
             <div
               class="drag-handle"
@@ -100,9 +100,9 @@
           </template>
         </el-table-column>
         
-        <el-table-column prop="order" label="序号" class-name="col-order" v-if="columnVisible.order" />
+        <el-table-column prop="order" label="序号" class-name="col-order" width="56" v-if="columnVisible.order" />
         
-        <el-table-column prop="name" label="任务名称" class-name="col-name" v-if="columnVisible.name">
+        <el-table-column prop="name" label="任务名称" class-name="col-name" min-width="140" v-if="columnVisible.name">
           <template #default="{ row }">
             <div class="task-name">
               <a 
@@ -118,7 +118,7 @@
           </template>
         </el-table-column>
         
-        <el-table-column label="分享链接" class-name="col-share" v-if="columnVisible.shareLink">
+        <el-table-column label="分享链接" class-name="col-share" min-width="160" v-if="columnVisible.shareLink">
           <template #default="{ row }">
             <div class="share-link-container">
               <template v-if="row.share_info">
@@ -139,7 +139,7 @@
           </template>
         </el-table-column>
         
-        <el-table-column prop="save_dir" label="保存路径" class-name="col-savedir" v-if="columnVisible.saveDir">
+        <el-table-column prop="save_dir" label="保存路径" class-name="col-savedir" min-width="160" v-if="columnVisible.saveDir">
           <template #default="{ row }">
             <div class="save-dir text-truncate" :title="row.save_dir">
               {{ row.save_dir }}
@@ -147,7 +147,7 @@
           </template>
         </el-table-column>
         
-        <el-table-column prop="category" label="分类" class-name="col-category" v-if="columnVisible.category">
+        <el-table-column prop="category" label="分类" class-name="col-category" width="80" v-if="columnVisible.category">
           <template #default="{ row }">
             <div class="task-category">
               <el-tag v-if="row.category" size="small" type="primary">
@@ -159,7 +159,7 @@
         </el-table-column>
         
         <!-- 定时规则列 -->
-        <el-table-column label="定时规则" class-name="col-cron" v-if="columnVisible.cron">
+        <el-table-column label="定时规则" class-name="col-cron" width="120" v-if="columnVisible.cron">
           <template #default="{ row }">
             <div class="cron-display">
               <el-tag v-if="row.cron" size="small" type="warning">
@@ -170,7 +170,7 @@
           </template>
         </el-table-column>
         
-        <el-table-column prop="message" label="消息" class-name="col-message" v-if="columnVisible.message">
+        <el-table-column prop="message" label="消息" class-name="col-message" min-width="180" v-if="columnVisible.message">
           <template #default="{ row }">
             <div class="task-message text-truncate" :title="row.message">
               {{ row.message || '-' }}
@@ -178,7 +178,7 @@
           </template>
         </el-table-column>
         
-        <el-table-column prop="status" label="状态" class-name="col-status" v-if="columnVisible.status">
+        <el-table-column prop="status" label="状态" class-name="col-status" width="90" v-if="columnVisible.status">
           <template #default="{ row }">
             <el-tag :type="getStatusType(row.status)" size="small">
               {{ getStatusText(row.status) }}
@@ -186,7 +186,7 @@
           </template>
         </el-table-column>
         
-        <el-table-column label="操作" class-name="col-actions" min-width="210">
+        <el-table-column label="操作" class-name="col-actions" width="230" fixed="right">
           <template #default="{ row }">
             <el-button-group size="small">
               <el-button @click="viewTaskLogs(row)" title="查看任务日志">日志</el-button>
@@ -811,7 +811,7 @@ watch([searchQuery, statusFilter, categoryFilter, isReversed], async () => {
 <style scoped>
 .tasks-view {
   padding: 24px;
-  min-height: 100vh;
+  min-height: 100%;
   background-color: #f5f5f5;
 }
 
@@ -876,51 +876,6 @@ watch([searchQuery, statusFilter, categoryFilter, isReversed], async () => {
 .desktop-table :deep(.el-table__body) {
   table-layout: fixed;
   width: 100%;
-}
-
-/* 通过 colgroup > col 设置列宽百分比 */
-.desktop-table :deep(colgroup col[name="el-table_1_column_1"]) {
-  width: 3% !important;
-}
-
-.desktop-table :deep(colgroup col[name="el-table_1_column_2"]) {
-  width: 3% !important;
-}
-
-.desktop-table :deep(colgroup col[name="el-table_1_column_3"]) {
-  width: 3% !important;
-}
-
-.desktop-table :deep(colgroup col[name="el-table_1_column_4"]) {
-  width: 9% !important;
-}
-
-.desktop-table :deep(colgroup col[name="el-table_1_column_5"]) {
-  width: 25% !important;
-}
-
-.desktop-table :deep(colgroup col[name="el-table_1_column_6"]) {
-  width: 14% !important;
-}
-
-.desktop-table :deep(colgroup col[name="el-table_1_column_7"]) {
-  width: 6% !important;
-}
-
-.desktop-table :deep(colgroup col[name="el-table_1_column_8"]) {
-  width: 14% !important;
-}
-
-.desktop-table :deep(colgroup col[name="el-table_1_column_9"]) {
-  width: 7% !important;
-}
-
-.desktop-table :deep(colgroup col[name="el-table_1_column_10"]) {
-  width: 5% !important;
-}
-
-.desktop-table :deep(colgroup col[name="el-table_1_column_11"]) {
-  width: 11% !important;
 }
 
 .task-name {

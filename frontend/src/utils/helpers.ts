@@ -233,13 +233,13 @@ export function getTaskStatusColor(status: string): string {
 
 // 设备检测 - 统一断点与CSS保持一致
 export function isMobile(): boolean {
-  return window.innerWidth < 1200
+  return window.innerWidth < 768
 }
 
 export function isTablet(): boolean {
-  return window.innerWidth >= 768 && window.innerWidth < 1200
+  return window.innerWidth >= 768 && window.innerWidth < 1100
 }
 
 export function isDesktop(): boolean {
-  return window.innerWidth >= 1200
+  return window.innerWidth >= 1100
 }

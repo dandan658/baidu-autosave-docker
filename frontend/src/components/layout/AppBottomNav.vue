@@ -27,12 +27,12 @@
       </router-link>
       
       <!-- 添加按钮 -->
-      <div class="nav-item add-btn" @click="showAddTaskDialog">
+      <button type="button" class="nav-item add-btn" @click="showAddTaskDialog" aria-label="添加转存任务">
         <div class="nav-icon add-icon">
           <el-icon size="24"><Plus /></el-icon>
         </div>
         <span class="nav-label">添加</span>
-      </div>
+      </button>
     </div>
     
     <!-- 背景安全区域 -->
@@ -102,208 +102,15 @@ const showAddTaskDialog = () => {
 </script>
 
 <style scoped>
-.app-bottom-nav {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  z-index: 1000;
-  background: #fff;
-  border-top: 1px solid #e4e7ed;
-  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.05);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-}
-
-.nav-content {
-  display: flex;
-  align-items: center;
-  height: 60px;
-  padding: 0 8px;
-}
-
-.nav-item {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 6px 4px;
-  border-radius: 8px;
-  text-decoration: none;
-  color: #909399;
-  transition: all 0.3s ease;
-  position: relative;
-  min-width: 0;
-}
-
-.nav-item:hover {
-  background-color: #f5f7fa;
-}
-
-.nav-item.active {
-  color: #409eff;
-  background-color: #409eff0a;
-}
-
-.nav-item.add-btn {
-  cursor: pointer;
-  color: #409eff;
-}
-
-.nav-item.add-btn:hover {
-  background-color: #409eff1a;
-}
-
-.nav-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: 2px;
-  position: relative;
-}
-
-.add-icon {
-  width: 36px;
-  height: 36px;
-  background: linear-gradient(135deg, #409eff, #67c23a);
-  border-radius: 50%;
-  color: white;
-  box-shadow: 0 2px 8px rgba(64, 158, 255, 0.3);
-  transform: scale(0.9);
-  transition: transform 0.2s ease;
-}
-
-.add-btn:active .add-icon {
-  transform: scale(0.85);
-}
-
-.nav-label {
-  font-size: 11px;
-  font-weight: 500;
-  line-height: 1;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 100%;
-}
-
-.add-btn .nav-label {
-  font-size: 10px;
-}
-
-.safe-area-padding {
-  height: env(safe-area-inset-bottom, 0);
-  background: #fff;
-}
-
-/* 活跃状态动画 */
-.nav-item.active::before {
-  content: '';
-  position: absolute;
-  top: -1px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 20px;
-  height: 2px;
-  background: #409eff;
-  border-radius: 1px;
-}
-
-/* 徽章样式优化 */
-.nav-item :deep(.el-badge__content) {
-  font-size: 10px;
-  padding: 0 4px;
-  height: 16px;
-  line-height: 16px;
-  min-width: 16px;
-  border: 1px solid #fff;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-}
-
-/* 响应式调整 - 统一断点 */
-@media (max-width: 1200px) {
-  .app-bottom-nav {
-    display: block;
-  }
-}
-
-@media (min-width: 1201px) {
-  .app-bottom-nav {
-    display: none;
-  }
-}
-
-@media (max-width: 375px) {
-  .nav-content {
-    padding: 0 4px;
-  }
-  
-  .nav-item {
-    padding: 4px 2px;
-  }
-  
-  .nav-label {
-    font-size: 10px;
-  }
-  
-  .add-icon {
-    width: 32px;
-    height: 32px;
-  }
-  
-  .add-icon .el-icon {
-    font-size: 20px;
-  }
-}
-
-@media (max-width: 320px) {
-  .nav-label {
-    display: none;
-  }
-  
-  .nav-item {
-    padding: 8px 2px;
-  }
-  
-  .nav-icon {
-    margin-bottom: 0;
-  }
-}
-
-/* 深色模式适配 */
-@media (prefers-color-scheme: dark) {
-  .app-bottom-nav {
-    background: rgba(42, 46, 54, 0.95);
-    border-top-color: #3c3c3c;
-  }
-  
-  .nav-item:hover {
-    background-color: #383838;
-  }
-  
-  .nav-item.active {
-    background-color: rgba(64, 158, 255, 0.15);
-  }
-  
-  .safe-area-padding {
-    background: rgba(42, 46, 54, 0.95);
-  }
-}
-
-/* 滑动手势优化 */
-@media (hover: none) {
-  .nav-item:hover {
-    background-color: transparent;
-  }
-  
-  .nav-item:active {
-    background-color: #f5f7fa;
-    transform: scale(0.95);
-  }
-  
-  .nav-item.add-btn:active {
-    background-color: #409eff1a;
-  }
-}
+.app-bottom-nav { position:fixed; z-index:1000; bottom:max(12px,env(safe-area-inset-bottom)); left:12px; right:12px; border-radius:28px; padding:6px; }
+.nav-content { display:flex; align-items:center; height:64px; gap:3px; }
+.nav-item { appearance:none; border:0; font-family:inherit; background:transparent; flex:1; min-width:0; height:58px; display:flex; flex-direction:column; gap:5px; align-items:center; justify-content:center; color:var(--text-secondary); text-decoration:none; border-radius:21px; cursor:pointer; transition:background .2s ease,color .2s ease,transform .2s var(--ios-ease); }
+.nav-item.active { background:var(--accent-soft); color:var(--el-color-primary); }
+.nav-item:active { transform:scale(.94); }
+.nav-icon { height:24px; display:flex; align-items:center; justify-content:center; }
+.nav-label { font-size:11px; font-weight:600; }
+.add-icon { width:34px; height:34px; border-radius:12px; background:var(--el-color-primary); color:white; }
+.add-btn .nav-label { display:none; }
+.safe-area-padding { display:none; }
+.nav-icon :deep(.el-badge__content) { height:16px; min-width:16px; padding:0 4px; font-size:10px; line-height:16px; }
 </style>
