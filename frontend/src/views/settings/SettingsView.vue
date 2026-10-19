@@ -317,6 +317,8 @@
                 </div>
               </form>
             </div>
+            <el-divider />
+            <BackendAccounts />
           </el-card>
         </el-tab-pane>
 
@@ -476,13 +478,13 @@
             <div class="setting-section">
               <h3>认证配置</h3>
               <el-form :model="authForm" label-width="150px">
-                <el-form-item label="管理员用户名">
+                <el-form-item label="原始登录账号">
                   <el-input
-                    v-model="authForm.users"
+                    v-model="authForm.users" disabled
                     placeholder="管理员用户名"
                     style="width: 200px;"
                   />
-                  <div class="form-tip">系统管理员的登录用户名</div>
+                  <div class="form-tip">原始账号名称保留；新增登录账号请到“账户设置”管理</div>
                 </el-form-item>
 
                 <el-alert
@@ -558,6 +560,7 @@ import { ElMessage } from 'element-plus'
 import { Plus, Delete, User, ArrowDown } from '@element-plus/icons-vue'
 import { storeToRefs } from 'pinia'
 import { useConfigStore, useVersionStore, useAuthStore } from '@/stores'
+import BackendAccounts from '@/components/business/BackendAccounts.vue'
 import { APP_VERSION, BUILD_TIME, RELEASE_NOTES } from '@/config/version'
 
 const configStore = useConfigStore()

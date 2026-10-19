@@ -18,6 +18,7 @@ from functools import wraps
 from media_rules import regex_filename, task_options
 from organizer import transfer_organized
 from task_history import delete_task_history
+from config_persistence import atomic_write_config
 
 def _format_transfer_error(error_str):
     """格式化转存错误信息，将百度API返回的模糊错误信息转换为更清晰的提示"""
@@ -184,18 +185,9 @@ class BaiduStorage:
                 if 'cron' in task and task['cron'] is None:
                     del task['cron']
                     
-            with open('config/config.json', 'w', encoding='utf-8') as f:
-                json.dump(self.config, f, ensure_ascii=False, indent=4)
-            
+            atomic_write_config(self.config)
             logger.debug("配置保存成功")
-            
-            # 确保配置已经写入文件
-            with open('config/config.json', 'r', encoding='utf-8') as f:
-                saved_config = json.load(f)
-                if saved_config != self.config:
-                    logger.error("配置保存验证失败")
-                    raise Exception("配置保存验证失败")
-            
+
             # 通知调度器更新任务
             if update_scheduler:
                 from scheduler import TaskScheduler

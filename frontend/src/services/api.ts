@@ -105,6 +105,22 @@ export class ApiService {
     return httpClient.post('/api/auth/update', data)
   }
 
+  async getLoginAccounts(): Promise<ApiResponse<any>> {
+    return httpClient.get('/api/auth/accounts')
+  }
+
+  async addLoginAccount(data: { username: string; password: string; current_password: string }): Promise<ApiResponse<any>> {
+    return httpClient.post('/api/auth/accounts', data)
+  }
+
+  async resetLoginPassword(username: string, data: { password: string; current_password: string }): Promise<ApiResponse<any>> {
+    return httpClient.post(`/api/auth/accounts/${encodeURIComponent(username)}/password`, data)
+  }
+
+  async deleteLoginAccount(username: string, current_password: string): Promise<ApiResponse<any>> {
+    return httpClient.delete(`/api/auth/accounts/${encodeURIComponent(username)}`, { current_password })
+  }
+
   // 其他API
   async checkVersion(source?: string): Promise<ApiResponse<any>> {
     return httpClient.get('/api/version/check', { source })

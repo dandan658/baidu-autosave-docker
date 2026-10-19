@@ -11,7 +11,7 @@ class ShareApiTests(unittest.TestCase):
     def setUp(self):
         import web_app
         self.web = web_app
-        self.storage = Mock(config={'auth': {}})
+        self.storage = Mock(config={'auth': {'users': 'admin', 'password': 'fixture-password'}})
         self.storage.list_tasks.return_value = [{'order': 1, 'url': 'https://pan.baidu.com/s/1example', 'pwd': 'ab12', 'name': '名称', 'save_dir': '/目录'}]
         self.storage.add_task.return_value = True
         self.storage.update_task_by_order.return_value = True

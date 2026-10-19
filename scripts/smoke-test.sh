@@ -33,6 +33,14 @@ curl -fsSL http://127.0.0.1:5000/ | grep -q 'id="app"'
 curl -fsS -c "$temp_dir/cookies" -H 'Content-Type: application/json' \
   -d '{"username":"admin","password":"ci-smoke-test-only"}' \
   http://127.0.0.1:5000/api/auth/login | python3 -c 'import json,sys; assert json.load(sys.stdin)["success"]'
+# Persist a second backend login, without replacing the original credentials.
+curl -fsS -b "$temp_dir/cookies" -H 'Content-Type: application/json' \
+  -d '{"username":"ci-second-login","password":"ci-second-test-only","current_password":"ci-smoke-test-only"}' \
+  http://127.0.0.1:5000/api/auth/accounts | python3 -c 'import json,sys; assert json.load(sys.stdin)["success"]'
+curl -fsS -c "$temp_dir/second-cookies" -H 'Content-Type: application/json' \
+  -d '{"username":"ci-second-login","password":"ci-second-test-only"}' \
+  http://127.0.0.1:5000/api/auth/login | python3 -c 'import json,sys; assert json.load(sys.stdin)["success"]'
+
 docker restart "$container"
 for attempt in $(seq 1 60); do
   if curl -fsS http://127.0.0.1:5000/healthz; then break; fi
@@ -40,4 +48,9 @@ for attempt in $(seq 1 60); do
 done
 curl -fsS -b "$temp_dir/cookies" http://127.0.0.1:5000/api/auth/check \
   | python3 -c 'import json,sys; assert json.load(sys.stdin)["success"]'
-echo 'PASS: startup, scheduler, UI, login, persisted session after restart'
+curl -fsS -b "$temp_dir/second-cookies" http://127.0.0.1:5000/api/auth/check \
+  | python3 -c 'import json,sys; data=json.load(sys.stdin); assert data["success"] and data["username"] == "ci-second-login"'
+curl -fsS -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"ci-smoke-test-only"}' \
+  http://127.0.0.1:5000/api/auth/login | python3 -c 'import json,sys; assert json.load(sys.stdin)["success"]'
+echo 'PASS: startup, scheduler, UI, original and additional logins, both sessions persisted after restart'

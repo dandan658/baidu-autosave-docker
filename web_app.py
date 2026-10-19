@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify, render_template, send_from_directory,
 from storage import BaiduStorage
 from media_rules import task_options
 from share_links import normalize_share
+from auth_accounts import account as login_account, verify as verify_login, public_accounts, add_account, change_password, remove_account
 from scheduler import TaskScheduler
 import json
 from loguru import logger
@@ -85,6 +86,7 @@ app = Flask(__name__)
 app.secret_key = os.environ.get('FLASK_SECRET_KEY') or __import__('secrets').token_hex(32)  # 用于session加密
 CORS(app)
 stream_slots = threading.BoundedSemaphore(4)
+auth_write_lock = threading.RLock()
 
 @app.route('/healthz')
 def healthz():
@@ -223,21 +225,50 @@ def get_server_port():
         return 5000
 
 
-# 登录装饰器
+def valid_login_session():
+    if not storage or 'username' not in session:
+        return False
+    auth = storage.config.get('auth', {})
+    entry = login_account(auth, session.get('username'))
+    if not entry or session.get('auth_version', 'legacy') != entry.get('session_version', 'legacy'):
+        return False
+    return time.time() - session.get('login_time', 0) <= auth.get('session_timeout', 3600)
+
+
+def begin_login(username):
+    session.clear()
+    session['username'] = username
+    session['login_time'] = time.time()
+    session['auth_version'] = login_account(storage.config.get('auth', {}), username)['session_version']
+
+
+def lock_auth_config(f):
+    @wraps(f)
+    def wrapped(*args, **kwargs):
+        with auth_write_lock:
+            return f(*args, **kwargs)
+    return wrapped
+
+
+def save_login_auth(updated):
+    previous = storage.config.get('auth', {})
+    storage.config['auth'] = updated
+    try:
+        storage._save_config(update_scheduler=False)
+    except Exception:
+        storage.config['auth'] = previous
+        raise
+
+
+# Validate existence and per-account revision on every protected request.
 def login_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        if 'username' not in session:
-            return redirect(url_for('login'))
-            
-        # 检查会话是否过期
-        auth_config = storage.config.get('auth', {})
-        session_timeout = auth_config.get('session_timeout', 3600)
-        if time.time() - session.get('login_time', 0) > session_timeout:
+        if not valid_login_session():
             session.clear()
+            if request.path.startswith('/api/'):
+                return jsonify({'success': False, 'message': '登录已失效，请重新登录'}), 401
             return redirect(url_for('login'))
-            
-        # 更新最后活动时间
         session['login_time'] = time.time()
         return f(*args, **kwargs)
     return decorated_function
@@ -311,10 +342,8 @@ def login():
             
         # 验证用户名和密码
         auth_config = storage.config.get('auth', {})
-        if (username == auth_config.get('users') and 
-            password == auth_config.get('password')):
-            session['username'] = username
-            session['login_time'] = time.time()
+        if verify_login(auth_config, username, password):
+            begin_login(username)
             
             # 返回JSON响应给新前端
             return jsonify({'success': True, 'message': '登录成功'})
@@ -1015,8 +1044,8 @@ def get_config():
     if current_username:
         current_user = storage.get_user(current_username)
     
-    auth_config = dict(storage.config.get('auth', {}))
-    auth_config.pop('password', None)
+    auth = storage.config.get('auth', {})
+    auth_config = {'users': auth.get('users', ''), 'session_timeout': auth.get('session_timeout', 3600)}
 
     config = {
         'cron': storage.config.get('cron', {}),
@@ -1053,6 +1082,7 @@ def format_webhook_body(webhook_body):
 
 @app.route('/api/config/update', methods=['POST'])
 @login_required
+@lock_auth_config
 @handle_api_error
 def update_config():
     """更新配置"""
@@ -1060,7 +1090,21 @@ def update_config():
         return jsonify({'success': False, 'message': '存储未初始化'})
         
     data = request.get_json()
-    
+    if not isinstance(data, dict):
+        return jsonify({'success': False, 'message': '配置格式不正确'}), 400
+    pending_auth = None
+    if 'auth' in data:
+        incoming = data['auth']
+        current = storage.config.get('auth', {})
+        if (not isinstance(incoming, dict) or set(incoming) - {'users', 'session_timeout'}
+                or incoming.get('users', current.get('users')) != current.get('users')):
+            return jsonify({'success': False, 'message': '请在账户设置中管理登录账号或修改本人密码'}), 400
+        timeout = incoming.get('session_timeout', current.get('session_timeout', 3600))
+        if isinstance(timeout, bool) or not isinstance(timeout, int) or not 60 <= timeout <= 31536000:
+            return jsonify({'success': False, 'message': '会话超时时间需为 60 至 31536000 秒'}), 400
+        pending_auth = dict(current, session_timeout=timeout)
+        del data['auth']
+
     # 处理通知配置：完全替换notify配置，清除旧字段
     if 'notify' in data:
         # 格式化WEBHOOK_BODY字段
@@ -1078,23 +1122,8 @@ def update_config():
         # 从data中移除notify，避免后续update重复处理
         del data['notify']
     
-    # 处理认证配置：保留现有密码，避免前端读取或误覆盖
-    if 'auth' in data:
-        current_auth = dict(storage.config.get('auth', {}))
-        incoming_auth = data.get('auth') or {}
-        merged_auth = {
-            'users': incoming_auth.get('users', current_auth.get('users', '')),
-            'session_timeout': incoming_auth.get('session_timeout', current_auth.get('session_timeout', 3600))
-        }
-
-        new_password = incoming_auth.get('password')
-        if isinstance(new_password, str) and new_password.strip():
-            merged_auth['password'] = new_password
-        elif 'password' in current_auth:
-            merged_auth['password'] = current_auth['password']
-
-        storage.config['auth'] = merged_auth
-        del data['auth']
+    if pending_auth is not None:
+        storage.config['auth'] = pending_auth
 
     # 更新其他配置
     storage.config.update(data)
@@ -1574,11 +1603,9 @@ def api_login():
         
     # 验证用户名和密码
     auth_config = storage.config.get('auth', {})
-    if (username == auth_config.get('users') and 
-        password == auth_config.get('password')):
-        session['username'] = username
-        session['login_time'] = time.time()
-        
+    if verify_login(auth_config, username, password):
+        begin_login(username)
+
         return jsonify({
             'success': True, 
             'message': '登录成功',
@@ -1598,16 +1625,10 @@ def api_logout():
 @handle_api_error
 def api_check_auth():
     """检查认证状态"""
-    if 'username' not in session:
-        return jsonify({'success': False, 'message': '未登录'}), 401
-        
-    # 检查会话是否过期
-    auth_config = storage.config.get('auth', {}) if storage else {}
-    session_timeout = auth_config.get('session_timeout', 3600)
-    if time.time() - session.get('login_time', 0) > session_timeout:
+    if not valid_login_session():
         session.clear()
-        return jsonify({'success': False, 'message': '会话已过期'}), 401
-        
+        return jsonify({'success': False, 'message': '登录已失效，请重新登录'}), 401
+
     return jsonify({
         'success': True, 
         'message': '认证有效',
@@ -1622,26 +1643,76 @@ def update_auth():
     if not storage:
         return jsonify({'success': False, 'message': '存储未初始化'})
         
-    data = request.get_json()
-    new_username = data.get('username', '').strip()
-    new_password = data.get('password', '').strip()
-    old_password = data.get('old_password', '').strip()
-    
-    if not new_username or not new_password or not old_password:
-        return jsonify({'success': False, 'message': '用户名、新密码和旧密码都不能为空'})
-    
-    # 验证旧密码
-    auth_config = storage.config.get('auth', {})
-    if old_password != auth_config.get('password'):
-        return jsonify({'success': False, 'message': '旧密码错误'})
-    
-    # 更新配置
-    auth_config['users'] = new_username
-    auth_config['password'] = new_password
-    storage.config['auth'] = auth_config
-    storage._save_config()
-    
-    return jsonify({'success': True, 'message': '登录凭据更新成功'})
+    data = request.get_json(silent=True) or {}
+    username = session['username']
+    if data.get('username', username) != username:
+        return jsonify({'success': False, 'message': '请保留当前登录账号名称'}), 400
+    with auth_write_lock:
+        auth = storage.config.get('auth', {})
+        if not verify_login(auth, username, data.get('old_password')):
+            return jsonify({'success': False, 'message': '当前密码错误'}), 400
+        try:
+            save_login_auth(change_password(auth, username, data.get('password')))
+        except ValueError as error:
+            return jsonify({'success': False, 'message': str(error)}), 400
+        begin_login(username)  # Keep this session; revoke other sessions for this account.
+    return jsonify({'success': True, 'message': '密码修改成功'})
+
+
+@app.route('/api/auth/accounts', methods=['GET', 'POST'])
+@login_required
+@handle_api_error
+def backend_accounts():
+    if request.method == 'GET':
+        return jsonify({'success': True, 'accounts': public_accounts(storage.config.get('auth', {}), session['username'])})
+    data = request.get_json(silent=True) or {}
+    with auth_write_lock:
+        auth = storage.config.get('auth', {})
+        if not verify_login(auth, session['username'], data.get('current_password')):
+            return jsonify({'success': False, 'message': '当前登录账号的密码错误'}), 400
+        try:
+            save_login_auth(add_account(auth, data.get('username'), data.get('password')))
+        except ValueError as error:
+            return jsonify({'success': False, 'message': str(error)}), 400
+    return jsonify({'success': True, 'message': '登录账号已新增'})
+
+
+@app.route('/api/auth/accounts/<username>', methods=['DELETE'])
+@login_required
+@handle_api_error
+def delete_backend_account(username):
+    data = request.get_json(silent=True) or {}
+    with auth_write_lock:
+        auth = storage.config.get('auth', {})
+        if not verify_login(auth, session['username'], data.get('current_password')):
+            return jsonify({'success': False, 'message': '当前登录账号的密码错误'}), 400
+        try:
+            save_login_auth(remove_account(auth, username, session['username']))
+        except ValueError as error:
+            return jsonify({'success': False, 'message': str(error)}), 400
+    return jsonify({'success': True, 'message': '登录账号已删除，共享任务和网盘数据保持不变'})
+
+
+@app.route('/api/auth/accounts/<username>/password', methods=['POST'])
+@login_required
+@handle_api_error
+def reset_backend_password(username):
+    data = request.get_json(silent=True) or {}
+    with auth_write_lock:
+        auth = storage.config.get('auth', {})
+        if not verify_login(auth, session['username'], data.get('current_password')):
+            return jsonify({'success': False, 'message': '当前登录账号的密码错误'}), 400
+        target = login_account(auth, username)
+        if target and target['is_primary']:
+            return jsonify({'success': False, 'message': '原始账号请本人登录后在修改密码处操作'}), 400
+        try:
+            save_login_auth(change_password(auth, username, data.get('password')))
+        except ValueError as error:
+            return jsonify({'success': False, 'message': str(error)}), 400
+        if username == session['username']:
+            begin_login(username)
+    return jsonify({'success': True, 'message': '密码已重置，该账号的其他会话已失效'})
+
 
 @app.route('/api/version/check', methods=['GET'])
 @handle_api_error
@@ -1984,12 +2055,16 @@ def stream_task(task_ref):
             yield _format_sse('snapshot', _build_task_stream_snapshot(task))
 
             while True:
+                if not valid_login_session():
+                    break
                 disconnected = request.environ.get('waitress.client_disconnected')
                 if disconnected and disconnected():
                     break
                 try:
                     event_name, payload = event_queue.get(timeout=2)
                 except queue.Empty:
+                    if not valid_login_session():
+                        break
                     latest_task = storage.resolve_task(task_uid, order=task_order, url=task_url)
                     if latest_task is None:
                         yield _format_sse('completed', {
@@ -2006,6 +2081,8 @@ def stream_task(task_ref):
                     })
                     continue
 
+                if not valid_login_session():
+                    break
                 yield _format_sse(event_name, payload)
                 if event_name == 'completed':
                     break

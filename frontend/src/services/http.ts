@@ -71,7 +71,8 @@ export class HttpClient {
 
       // 检查HTTP状态码
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+        const details = await response.json().catch(() => null)
+        throw new Error(details?.message || `HTTP ${response.status}: ${response.statusText}`)
       }
 
       const contentType = response.headers.get('content-type')
