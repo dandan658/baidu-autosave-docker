@@ -1,0 +1,20 @@
+services:
+  baidu-autosave:
+    image: ghcr.io/dandan658/baidu-autosave-docker:latest
+    pull_policy: always
+    container_name: baidu-autosave
+    restart: unless-stopped
+    init: true
+    ports:
+      - "18500:5000"
+    environment:
+      TZ: Asia/Shanghai
+      ADMIN_USERNAME: admin
+    volumes:
+      - ./config:/app/config
+      - ./log:/app/log
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -6,7 +6,7 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 
-from media_rules import destination_name, episode, regex_filename, task_options
+from media_rules import destination_name, episode, regex_filename, task_options, season_in_folder
 from organizer import transfer_organized
 
 
@@ -16,6 +16,41 @@ def tv(**changes):
 
 
 class NamingTests(unittest.TestCase):
+    def test_decorated_chinese_and_english_season_folders(self):
+        for folder, number in [('庆余年 第一季 4K', 1), ('剧名第二季【完结】', 2),
+                               ('第三季', 3), ('第十一季', 11), ('第二十二季', 22),
+                               ('第一百零三季', 103), ('剧名Season.02', 2),
+                               ('剧名 S03 1080p', 3), ('Ｓ０４', 4), ('第２季', 2)]:
+            with self.subTest(folder=folder):
+                self.assertEqual(season_in_folder(folder), number)
+        for folder in ('001-090', '091-100', '2026', '4K', '第一季-第三季', 'Season 01-03', '第零季'):
+            self.assertIsNone(season_in_folder(folder), folder)
+
+    def test_parent_season_overrides_incorrect_filename_season(self):
+        self.assertEqual(episode('剧名第二季/S01E03.mp4'), (2, 3))
+        for number, folder in enumerate(('第一季', '第二季', '第三季'), 1):
+            self.assertEqual(destination_name(f'{folder}/S01E01.mp4', tv())[1],
+                             f'牧神记 - S{number:02d}E01.mp4')
+
+    def test_nearest_directory_and_manual_mapping_precedence(self):
+        self.assertEqual(destination_name('第一季/剧名第二季/01.mp4', tv())[1], '牧神记 - S02E01.mp4')
+        task = tv(season_folders=[{'source': '第二季', 'season': 5, 'name': '自定义第五季'}])
+        self.assertEqual(destination_name('第二季/S01E01.mp4', task)[1], '牧神记 - S05E01.mp4')
+
+    def test_unmerged_seasons_remain_separate(self):
+        task = tv()
+        task['flatten'] = False
+        for number, folder in enumerate(('剧名 第一季 完结', '剧名第二季', '第三季'), 1):
+            self.assertEqual(destination_name(f'{folder}/01.mp4', task)[1],
+                             f'Season {number:02d}/牧神记 - S{number:02d}E01.mp4')
+
+    def test_share_root_season_survives_stripping_and_quality_subfolder(self):
+        task = tv()
+        task['flatten'] = False
+        self.assertEqual(destination_name('4K/S01E01.mp4', task,
+                         source_path='剧名第三季/4K/S01E01.mp4')[1],
+                         'Season 03/4K/牧神记 - S03E01.mp4')
+
     def test_episode_does_not_use_quality(self):
         self.assertEqual(episode('105 4K.mp4'), (1, 105))
         self.assertEqual(episode('S02E03.1080p.mkv'), (2, 3))
@@ -107,6 +142,16 @@ class FakeStorage:
 
 
 class TransferTests(unittest.TestCase):
+    def test_multi_season_subscription_same_episode_names_remain_distinct(self):
+        for source, folder in zip(self.files, ('剧名第一季', '剧名第二季', '剧名第三季')):
+            source['path'] = f'合集/{folder}/S01E01.mp4'
+        result = self.run_transfer()
+        self.assertTrue(result['success'])
+        self.assertEqual(set(self.storage.files), {f'/剧集/牧神记 - S{number:02d}E01.mp4' for number in (1, 2, 3)})
+        self.storage.files.clear()  # The user moved everything for scraping.
+        self.assertTrue(self.run_transfer()['skipped'])
+        self.assertEqual(len(self.storage.transfers), 3)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.previous = os.getcwd()

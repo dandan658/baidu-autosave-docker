@@ -1,6 +1,7 @@
 """Pure naming rules shared by task validation and the transfer planner."""
 import posixpath
 import re
+import unicodedata
 
 VIDEO_EXTENSIONS = {'.mp4', '.mkv', '.avi', '.mov', '.m4v', '.ts', '.m2ts', '.wmv', '.flv', '.webm'}
 SUBTITLE_EXTENSIONS = {'.srt', '.ass', '.ssa', '.vtt', '.sub'}
@@ -77,13 +78,64 @@ def regex_filename(path, task):
     return True, path
 
 
+def season_number(value):
+    """Parse a season number without confusing years or episode-range folders."""
+    value = unicodedata.normalize('NFKC', value).strip()
+    if value.isdecimal():
+        number = int(value)
+    else:
+        digits = dict(zip('零〇一二两三四五六七八九', (0, 0, 1, 2, 2, 3, 4, 5, 6, 7, 8, 9)))
+        if not value or any(char not in digits and char not in '十百' for char in value):
+            return None
+        if not any(char in '十百' for char in value):
+            number = int(''.join(str(digits[char]) for char in value))
+        else:
+            number, current, previous_unit = 0, 0, 1000
+            for char in value:
+                if char in digits:
+                    current = digits[char]
+                else:
+                    unit = 10 if char == '十' else 100
+                    if unit >= previous_unit:
+                        return None
+                    number += (current or 1) * unit
+                    current, previous_unit = 0, unit
+            number += current
+    return number if 1 <= number <= 999 else None
+
+
+def season_in_folder(folder):
+    folder = unicodedata.normalize('NFKC', folder)
+    # A range describes a collection, not a single season.
+    if re.search(r'(?i)(?:season[ ._-]*|(?<![a-z0-9])s)\d{1,3}\s*[-~至到]\s*(?:season[ ._-]*|s)?\d', folder):
+        return None
+    values = re.findall(r'第\s*([0-9零〇一二两三四五六七八九十百]{1,7})\s*季', folder)
+    plain = re.fullmatch(r'\s*([0-9零〇一二两三四五六七八九十百]{1,7})\s*季\s*', folder)
+    if plain:
+        values.append(plain[1])
+    values += re.findall(r'(?i)(?:(?<![a-z])season[ ._-]*|(?<![a-z0-9])s)(\d{1,3})(?!\d|[eE]\d)', folder)
+    numbers = {season_number(value) for value in values}
+    numbers.discard(None)
+    return numbers.pop() if len(numbers) == 1 else None
+
+
+def directory_season(path):
+    """The nearest season directory wins over a season label on an outer collection."""
+    parts = posixpath.dirname(path).split('/')
+    for index in range(len(parts) - 1, -1, -1):
+        number = season_in_folder(parts[index])
+        if number is not None:
+            return index, number
+    return None
+
+
 def episode(path, default_season=1):
     stem = posixpath.splitext(posixpath.basename(path))[0]
+    parent = directory_season(path)
+    season = parent[1] if parent else default_season
     match = re.search(r'(?i)(?<![a-z0-9])S(\d{1,3})[ ._-]*E(\d{1,4})(?!\d)', stem)
     if match:
-        return int(match[1]), int(match[2])
-    parent_season = re.search(r'(?i)(?:^|/)(?:season[ ._-]*|S)(\d{1,3})(?:/|$)', posixpath.dirname(path))
-    season = int(parent_season[1]) if parent_season else default_season
+        return season if parent else int(match[1]), int(match[2])
     for pattern in (r'第\s*(\d{1,4})\s*[集话話]', r'(?i)(?<![a-z0-9])(?:EP?|episode)[ ._-]*(\d{1,4})(?!\d)', r'^\s*(\d{1,4})(?=$|[ ._\-])'):
         match = re.search(pattern, stem)
         if match:
@@ -94,7 +146,7 @@ def episode(path, default_season=1):
     return None
 
 
-def destination_name(path, task):
+def destination_name(path, task, source_path=None):
     """Return (included, relative destination, warning). No network side effects."""
     included, renamed = regex_filename(path, task)
     if not included:
@@ -109,16 +161,18 @@ def destination_name(path, task):
             mapped_parent = posixpath.dirname(posixpath.join(rule.get('name') or f'Season {season:02d}', path[len(prefix) + 1:]))
             matched_rule = rule
             break
-    if task.get('media_type') == 'tv' and not matched_rule:
-        for part in posixpath.dirname(path).split('/'):
-            match = re.fullmatch(r'(?i)(?:season[ ._-]*|s)(\d{1,3})', part) or re.fullmatch(r'第?(\d{1,3})季', part)
-            chinese = re.fullmatch(r'第?([一二三四五六七八九十])季', part)
-            if match or chinese:
-                season = int(match[1]) if match else '一二三四五六七八九十'.index(chinese[1]) + 1
-                parts = mapped_parent.split('/')
-                parts[parts.index(part)] = f'Season {season:02d}'
-                mapped_parent = '/'.join(parts)
-                break
+    detected_directory = directory_season(source_path or path) if task.get('media_type') == 'tv' else None
+    if detected_directory and not matched_rule:
+        season = detected_directory[1]
+        relative_directory = directory_season(path)
+        if relative_directory:
+            parts = mapped_parent.split('/')
+            parts[relative_directory[0]] = f'Season {season:02d}'
+            mapped_parent = '/'.join(parts)
+        else:
+            # The share root may have been stripped for destination layout;
+            # retain its season even when only quality subfolders remain.
+            mapped_parent = posixpath.join(f'Season {season:02d}', mapped_parent)
     renamed = posixpath.join(mapped_parent, posixpath.basename(renamed))
     if task.get('auto_rename'):
         ext = posixpath.splitext(path)[1].lower()
@@ -131,7 +185,7 @@ def destination_name(path, task):
                 return False, path, f'无法识别集数，跳过并保留源文件：{path}'
             detected_season, number = parsed
             # An explicit per-directory rule takes precedence over filename tags.
-            season = season if matched_rule else detected_season
+            season = season if matched_rule or detected_directory else detected_season
             filename = f'{title} - S{season:02d}E{number:02d}'
         else:
             filename = title

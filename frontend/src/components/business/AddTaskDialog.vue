@@ -38,11 +38,21 @@
         <el-switch v-model="form.auto_rename" :disabled="form.media_type === 'other'" />
         <div class="form-help">根据自定义任务名称整理视频和字幕；无法识别集数会提示并跳过，不会按 4K 等画质数字误命名。</div>
       </el-form-item>
+      <el-form-item v-if="form.media_type === 'tv' && form.auto_rename" label="多季识别">
+        <div class="form-help">自动识别各级目录中的第一季、第二季、第三季、Season 02、S03 等。优先使用手动目录规则，其次使用最近的季目录，再使用文件名中的 Sxx，最后才使用下方默认季数。目录中的季数会修正文件名里错误的 S01。</div>
+      </el-form-item>
       <el-form-item v-if="form.media_type === 'tv' && form.auto_rename" label="默认季数">
         <el-input-number v-model="form.season" :min="1" :max="999" :precision="0" />
+        <div class="form-help">仅在目录和文件名都未提供季数时使用，不会把整个订阅统一改成第一季。</div>
       </el-form-item>
       <el-form-item v-if="form.auto_rename" label="命名示例">
-        <div class="form-help">{{ form.name || '自定义名称' }}{{ form.media_type === 'tv' ? ` - S${String(form.season).padStart(2, '0')}E101` : '' }}.mp4<br>保留视频原格式；字幕保留语言后缀；同名冲突自动区分，不覆盖文件。</div>
+        <div class="form-help">
+          <template v-if="form.media_type === 'tv'">
+            <div v-for="(label, index) in ['第一季', '第二季', '第三季']" :key="label">{{ label }}/01.mp4 → {{ form.name || '自定义名称' }} - S{{ String(index + 1).padStart(2, '0') }}E01.mp4</div>
+          </template>
+          <div v-else>{{ form.name || '自定义名称' }}.mp4</div>
+          保留视频原格式；字幕保留语言后缀；同名冲突自动区分，不覆盖文件。
+        </div>
       </el-form-item>
       <el-form-item v-if="form.media_type === 'tv'" label="分季目录">
         <div style="width: 100%">

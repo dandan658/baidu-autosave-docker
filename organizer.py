@@ -85,7 +85,7 @@ def transfer_organized(storage, client, files, roots, share_url, save_dir, task,
             history.remember(source, previous['path'])
         if history.contains(source):
             continue
-        included, destination, warning = destination_name(relative, task)
+        included, destination, warning = destination_name(relative, task, source_path=source['path'])
         if warning:
             warnings.append(warning)
             report('warning', warning)
