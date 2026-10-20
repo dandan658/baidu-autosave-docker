@@ -127,3 +127,16 @@ class BackendAccountApiTests(unittest.TestCase):
         self.assertFalse(response.json['success'])
         self.assertEqual(self.store.config, before)
         self.assert_shared_data()
+
+    def test_tmdb_settings_protected_persisted_and_secret_not_returned(self):
+        self.assertEqual(self.web.app.test_client().get('/api/tmdb/settings').status_code, 401)
+        response = self.admin.post('/api/tmdb/settings', json={'credential': 'fixture-tmdb-secret', 'default_root': '/001'})
+        self.assertTrue(response.json['success'])
+        self.assertNotIn('fixture-tmdb-secret', response.get_data(as_text=True))
+        self.assertTrue(self.admin.get('/api/tmdb/settings').json['settings']['configured'])
+        self.assertEqual(json.loads(Path('config/config.json').read_text())['tmdb']['default_root'], '/001')
+        self.assert_shared_data()
+        with patch('web_app.tmdb_service.search', return_value=[{'title': '牧神记', 'save_dir': '/001/牧神记'}]) as search:
+            response = self.admin.get('/api/tmdb/search', query_string={'query': '牧神记', 'media_type': 'tv'})
+            self.assertEqual(response.json['results'][0]['save_dir'], '/001/牧神记')
+            self.assertEqual(search.call_args.args[1:], ('牧神记', 'tv'))

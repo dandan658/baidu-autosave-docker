@@ -105,6 +105,18 @@ export class ApiService {
     return httpClient.post('/api/auth/update', data)
   }
 
+  async getTmdbSettings(): Promise<ApiResponse<any>> {
+    return httpClient.get('/api/tmdb/settings')
+  }
+
+  async saveTmdbSettings(data: { default_root: string; credential: string }): Promise<ApiResponse<any>> {
+    return httpClient.post('/api/tmdb/settings', data)
+  }
+
+  async searchTmdb(query: string, media_type: string): Promise<ApiResponse<any>> {
+    return httpClient.get('/api/tmdb/search', { query, media_type })
+  }
+
   async getLoginAccounts(): Promise<ApiResponse<any>> {
     return httpClient.get('/api/auth/accounts')
   }

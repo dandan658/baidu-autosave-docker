@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify, render_template, send_from_directory,
 from storage import BaiduStorage
 from media_rules import task_options
 from share_links import normalize_share
+import tmdb_service
 from auth_accounts import account as login_account, verify as verify_login, public_accounts, add_account, change_password, remove_account
 from scheduler import TaskScheduler
 import json
@@ -1079,6 +1080,36 @@ def format_webhook_body(webhook_body):
     
     # 如果不是简化格式，直接返回原始值
     return webhook_body
+
+@app.route('/api/tmdb/settings', methods=['GET', 'POST'])
+@login_required
+@handle_api_error
+def tmdb_settings():
+    with auth_write_lock:
+        previous = storage.config.get('tmdb', {})
+        if request.method == 'POST':
+            try:
+                updated = tmdb_service.settings_update(previous, request.get_json(silent=True))
+            except ValueError as error:
+                return jsonify({'success': False, 'message': str(error)}), 400
+            storage.config['tmdb'] = updated
+            try:
+                storage._save_config(update_scheduler=False)
+            except Exception:
+                storage.config['tmdb'] = previous
+                raise
+        return jsonify({'success': True, 'settings': tmdb_service.public_settings(storage.config.get('tmdb', {}))})
+
+
+@app.route('/api/tmdb/search')
+@login_required
+def tmdb_search():
+    try:
+        results = tmdb_service.search(dict(storage.config.get('tmdb', {})), request.args.get('query', ''), request.args.get('media_type', ''))
+        return jsonify({'success': True, 'results': results})
+    except ValueError as error:
+        return jsonify({'success': False, 'message': str(error)}), 400
+
 
 @app.route('/api/config/update', methods=['POST'])
 @login_required

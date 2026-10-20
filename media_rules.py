@@ -22,10 +22,10 @@ def replacement(value):
 def task_options(data, previous=None):
     previous = previous or {}
     result = {key: data.get(key, previous.get(key, default)) for key, default in (
-        ('media_type', 'other'), ('flatten', False), ('auto_rename', False), ('season', 1), ('season_folders', []))}
+        ('media_type', 'other'), ('flatten', False), ('auto_rename', False), ('season', 1), ('season_folders', []), ('force_first_season', False), ('tmdb', None))}
     if result['media_type'] not in ('other', 'movie', 'tv'):
         raise ValueError('资源类型必须为普通文件、电影或电视剧')
-    for key in ('flatten', 'auto_rename'):
+    for key in ('flatten', 'auto_rename', 'force_first_season'):
         if not isinstance(result[key], bool):
             raise ValueError(f'{key} 必须为布尔值')
     if isinstance(result['season'], bool) or not isinstance(result['season'], int) or not 1 <= result['season'] <= 999:
@@ -51,6 +51,16 @@ def task_options(data, previous=None):
         rules.append({'source': source, 'season': season, 'name': name})
         seen.add(source)
     result['season_folders'] = rules
+    metadata = result['tmdb']
+    if metadata is not None:
+        if (not isinstance(metadata, dict) or isinstance(metadata.get('id'), bool)
+                or not isinstance(metadata.get('id'), int) or metadata['id'] <= 0
+                or metadata.get('media_type') != result['media_type']
+                or result['media_type'] not in ('tv', 'movie')
+                or not isinstance(metadata.get('title'), str) or not metadata['title'].strip()):
+            raise ValueError('TMDB 影片资料格式不正确或与资源类型不符')
+        result['tmdb'] = {'id': metadata['id'], 'media_type': metadata['media_type'],
+                          'title': safe_name(metadata['title'][:200]), 'year': str(metadata.get('year', ''))[:4]}
     if rules and result['media_type'] != 'tv':
         raise ValueError('分季目录规则只适用于电视剧')
     pattern = data.get('regex_pattern', previous.get('regex_pattern', '')) or ''
@@ -132,7 +142,7 @@ def directory_season(path):
 def episode(path, default_season=1):
     stem = posixpath.splitext(posixpath.basename(path))[0]
     parent = directory_season(path)
-    season = parent[1] if parent else default_season
+    season = parent[1] if parent else (season_in_folder(stem) or default_season)
     match = re.search(r'(?i)(?<![a-z0-9])S(\d{1,3})[ ._-]*E(\d{1,4})(?!\d)', stem)
     if match:
         return season if parent else int(match[1]), int(match[2])
@@ -173,6 +183,16 @@ def destination_name(path, task, source_path=None):
             # The share root may have been stripped for destination layout;
             # retain its season even when only quality subfolders remain.
             mapped_parent = posixpath.join(f'Season {season:02d}', mapped_parent)
+    force_first = task.get('media_type') == 'tv' and task.get('force_first_season', False)
+    if force_first:
+        season = 1
+        # Override season labels while retaining non-season subdirectory structure.
+        parts = mapped_parent.split('/')
+        parts = [part for part in parts if season_in_folder(part) is None]
+        mapped_parent = posixpath.join('Season 01', *[part for part in parts if part])
+        if matched_rule:
+            original = posixpath.dirname(path[len(matched_rule['source'].strip('/')) + 1:])
+            mapped_parent = posixpath.join('Season 01', *[part for part in original.split('/') if part and season_in_folder(part) is None])
     renamed = posixpath.join(mapped_parent, posixpath.basename(renamed))
     if task.get('auto_rename'):
         ext = posixpath.splitext(path)[1].lower()
@@ -185,7 +205,7 @@ def destination_name(path, task, source_path=None):
                 return False, path, f'无法识别集数，跳过并保留源文件：{path}'
             detected_season, number = parsed
             # An explicit per-directory rule takes precedence over filename tags.
-            season = season if matched_rule or detected_directory else detected_season
+            season = season if force_first or matched_rule or detected_directory else detected_season
             filename = f'{title} - S{season:02d}E{number:02d}'
         else:
             filename = title

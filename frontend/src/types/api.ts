@@ -14,6 +14,8 @@ export interface Task {
   flatten?: boolean
   auto_rename?: boolean
   season?: number
+  force_first_season?: boolean
+  tmdb?: { id: number; media_type: string; title: string; year: string } | null
   order: number
   task_uid?: string
   name?: string
@@ -46,6 +48,8 @@ export interface CreateTaskRequest {
   flatten?: boolean
   auto_rename?: boolean
   season?: number
+  force_first_season?: boolean
+  tmdb?: { id: number; media_type: string; title: string; year: string } | null
   url: string
   save_dir: string
   pwd?: string
@@ -62,6 +66,8 @@ export interface UpdateTaskRequest {
   flatten?: boolean
   auto_rename?: boolean
   season?: number
+  force_first_season?: boolean
+  tmdb?: { id: number; media_type: string; title: string; year: string } | null
   url?: string
   save_dir?: string
   pwd?: string
