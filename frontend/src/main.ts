@@ -8,6 +8,7 @@ import { pinia } from './stores'
 import ElementPlus from 'element-plus'
 import 'element-plus/dist/index.css'
 import './styles/glass.css'
+import './styles/liquid.css'
 import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 
 // 创建应用实例
